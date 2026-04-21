@@ -28,7 +28,7 @@ function shuffle<T>(arr: T[]): T[] {
 
 export function buildSession(deckId: DeckId): GameCard[] {
   const deck = getDeck(deckId);
-  if (!deck || deck.cards.length === 0) return [];
+  if (!deck || deck.cards.length < SESSION_SIZE) return [];
 
   const pools: Record<Subtheme, GameCard[]> = {
     playful: shuffle(deck.cards.filter((c) => c.subtheme === 'playful')),
@@ -36,12 +36,29 @@ export function buildSession(deckId: DeckId): GameCard[] {
     chemistry: shuffle(deck.cards.filter((c) => c.subtheme === 'chemistry')),
   };
 
-  // Refill by reshuffling when a pool runs dry (handles small decks gracefully)
+  // Global fallback: used when a specific subtheme pool is empty
+  const fallback = shuffle([...deck.cards]);
+  const usedIds = new Set<string>();
+
   function draw(subtheme: Subtheme): GameCard | undefined {
-    if (pools[subtheme].length === 0) {
-      pools[subtheme] = shuffle(deck!.cards.filter((c) => c.subtheme === subtheme));
+    // Prefer cards of the requested subtheme
+    const pool = pools[subtheme];
+    while (pool.length > 0) {
+      const card = pool.pop()!;
+      if (!usedIds.has(card.id)) {
+        usedIds.add(card.id);
+        return card;
+      }
     }
-    return pools[subtheme].pop();
+    // Subtheme pool exhausted: pick any unused card from the deck
+    while (fallback.length > 0) {
+      const card = fallback.pop()!;
+      if (!usedIds.has(card.id)) {
+        usedIds.add(card.id);
+        return card;
+      }
+    }
+    return undefined;
   }
 
   const session: GameCard[] = [];

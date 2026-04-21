@@ -19,6 +19,7 @@ import {
   loadGameSessionCardAnswers,
   loadMyGameSessionProgress,
   loadSessionCards,
+  resetGameSession,
   saveGameSessionAnswer,
   saveGameSessionCompletion,
   updateMyGameSessionProgress,
@@ -150,6 +151,7 @@ export default function PlayScreen() {
   const [navigating, setNavigating] = useState<'prev' | 'next' | null>(null);
   const [chemistryOtherOpen, setChemistryOtherOpen] = useState(false);
   const [chemistryCustomText, setChemistryCustomText] = useState('');
+  const [sessionComplete, setSessionComplete] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -236,9 +238,10 @@ export default function PlayScreen() {
           : [];
   const sessionLength = cards.length;
   const canGoPrev = currentIndex > 0 && !savingAnswer && !navigating;
-  const canGoNext =
-    currentIndex < sessionLength - 1 && !!cardAnswers.myAnswer && !savingAnswer && !navigating;
-  const nextLabel = currentIndex === sessionLength - 1 ? 'Session complète' : 'Carte suivante →';
+  const isLastCard = currentIndex === sessionLength - 1;
+  const canGoNext = !isLastCard && !!cardAnswers.myAnswer && !savingAnswer && !navigating;
+  const canFinish = isLastCard && !!cardAnswers.myAnswer && !savingAnswer && !navigating;
+  const nextLabel = isLastCard ? 'Terminer la session →' : 'Carte suivante →';
 
   useEffect(() => {
     if (!session || !couple || !card) return;
@@ -528,6 +531,78 @@ export default function PlayScreen() {
     return ANSWER_LABELS[cardAnswers.partnerAnswer];
   }
 
+  function handleEndSession() {
+    setSessionComplete(true);
+  }
+
+  async function handleReplay() {
+    if (!session || !couple || !deckDef) return;
+
+    setActionError(null);
+    setSessionComplete(false);
+    setLoading(true);
+
+    try {
+      const newSession = await resetGameSession(session.id, couple.id, deckDef.id);
+      const sessionCards = loadSessionCards(newSession);
+
+      setSession(newSession);
+      setCards(sessionCards);
+      setCurrentIndex(0);
+      setCardAnswerState({ cardId: null, answers: EMPTY_ANSWERS });
+    } catch (error) {
+      setSessionComplete(true);
+      setActionError(formatScreenError(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function getCompletionMessage(playMode: PlayMode): string {
+    switch (playMode) {
+      case 'who_is': return "Vous vous connaissez un peu mieux — c'est déjà beaucoup.";
+      case 'would_you_rather': return "Vos choix vous ont révélé l'un à l'autre.";
+      case 'conversation': return "Prenez soin de ce qui s'est dit entre vous.";
+      case 'guided_choice': return "Vos réponses ont été entendues. La chimie continue.";
+      case 'dare': return "Vous avez osé ensemble — c'est ça, être vrais complices.";
+    }
+  }
+
+  if (sessionComplete && activeDeck) {
+    return (
+      <View style={styles.screen}>
+        <Stack.Screen options={{ headerShown: false }} />
+        <StatusBar style="dark" />
+        <View style={[styles.centered, styles.completionWrap]}>
+          <View style={styles.completionCard}>
+            <View style={styles.completionIconWrap}>
+              <Text style={styles.completionIcon}>♥</Text>
+            </View>
+            <Text style={styles.completionTitle}>Session terminée</Text>
+            <Text style={styles.completionDesc}>{getCompletionMessage(activeDeck.playMode)}</Text>
+          </View>
+          <View style={styles.completionActions}>
+            <Pressable
+              style={({ pressed }) => [styles.cta, pressed && styles.ctaPressed]}
+              onPress={handleReplay}
+              accessibilityRole="button"
+            >
+              <Text style={styles.ctaText}>Rejouer →</Text>
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [styles.secondary, pressed && styles.secondaryPressed]}
+              onPress={() => router.back()}
+              accessibilityRole="button"
+            >
+              <Text style={styles.secondaryText}>Retour au couple</Text>
+            </Pressable>
+          </View>
+          {actionError ? <Text style={styles.errorText}>{actionError}</Text> : null}
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.screen}>
       <Stack.Screen options={{ headerShown: false }} />
@@ -794,11 +869,11 @@ export default function PlayScreen() {
             style={({ pressed }) => [
               styles.cta,
               styles.navBtn,
-              (!canGoNext || pressed) && styles.ctaPressed,
-              !canGoNext && styles.ctaDisabled,
+              (!(isLastCard ? canFinish : canGoNext) || pressed) && styles.ctaPressed,
+              !(isLastCard ? canFinish : canGoNext) && styles.ctaDisabled,
             ]}
-            onPress={() => handleMove('next')}
-            disabled={!canGoNext}
+            onPress={() => (isLastCard ? handleEndSession() : handleMove('next'))}
+            disabled={isLastCard ? !canFinish : !canGoNext}
             accessibilityRole="button"
           >
             <Text style={styles.ctaText}>{nextLabel}</Text>
@@ -807,9 +882,6 @@ export default function PlayScreen() {
 
         {savingAnswer ? <Text style={styles.helperText}>Enregistrement...</Text> : null}
         {actionError ? <Text style={styles.errorText}>{actionError}</Text> : null}
-        {currentIndex === sessionLength - 1 ? (
-          <Text style={styles.helperText}>Vous êtes sur la dernière carte de la session.</Text>
-        ) : null}
       </ScrollView>
     </View>
   );
@@ -1100,5 +1172,55 @@ const styles = StyleSheet.create({
     color: '#8D99AE',
     textAlign: 'center',
     lineHeight: 22,
+  },
+
+  // Completion screen
+  completionWrap: {
+    flex: 1,
+    paddingHorizontal: 8,
+    gap: 24,
+  },
+  completionCard: {
+    backgroundColor: '#FFFDF9',
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: '#E9D8C8',
+    padding: 32,
+    alignItems: 'center',
+    gap: 16,
+    shadowColor: '#C4A882',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 24,
+    elevation: 5,
+  },
+  completionIconWrap: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: '#F2CCB7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  completionIcon: {
+    fontSize: 32,
+    color: '#E07A5F',
+  },
+  completionTitle: {
+    fontSize: 26,
+    fontWeight: '800',
+    color: '#2B2D42',
+    textAlign: 'center',
+    letterSpacing: 0.3,
+  },
+  completionDesc: {
+    fontSize: 16,
+    color: '#5C677D',
+    textAlign: 'center',
+    lineHeight: 26,
+  },
+  completionActions: {
+    width: '100%',
+    gap: 12,
   },
 });

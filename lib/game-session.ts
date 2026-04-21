@@ -219,3 +219,18 @@ export async function updateMyGameSessionProgress(
   if (error) throw error;
   return data as GameSessionProgress;
 }
+
+export async function resetGameSession(
+  sessionId: string,
+  coupleId: string,
+  deckId: DeckId
+): Promise<GameSession> {
+  const { error } = await supabase
+    .from('game_sessions')
+    .delete()
+    .eq('id', sessionId);
+
+  if (error) throw error;
+
+  return createOrResumeGameSession(coupleId, deckId);
+}

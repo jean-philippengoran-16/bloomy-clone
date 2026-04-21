@@ -1,27 +1,40 @@
 # HANDOFF
 
-## What already works
+## Ce qui fonctionne
+
 - couple creation and claiming work with Supabase
 - boot redirects to `/couple` when a couple exists
 - daily check-in exists
-- `who_is_v1` exists and the app runs again after quote fixes
+- tous les 5 decks sont jouables : `who_is_v1`, `would_you_rather_v1`, `connection_v1`, `chemistry_v1`, `dare_v1`
+- l'écran de jeu gère les 5 play modes (who_is, would_you_rather, conversation, guided_choice, dare)
+- le moteur de session est stabilisé : `buildSession` tombe en fallback si un subthème est absent d'un deck
+- une vraie fin de session existe : écran "Session terminée" avec message contextuel, bouton Rejouer et retour
+- Rejouer supprime et recrée la session (nouvelles 10 cartes), sans modification SQL
 
-## What is currently visible in the app
-- `/couple` shows:
-  - active card for "Qui de nous deux ?"
-  - inactive cards for:
-    - Tu préfères ?
-    - Connexion
-    - Chemistry
-    - Dare
+## Architecture session
 
-## Next logical task
-Make `would_you_rather_v1` the second playable deck, without changing backend architecture.
+- `SESSION_SIZE = 10` cartes par session
+- BLUEPRINT : escalade naturelle playful → romantic → chemistry
+- `buildSession()` : fallback sur les cartes disponibles si un pool de subthème est vide
+- `resetGameSession(sessionId, coupleId, deckId)` : DELETE + recreate, cascade supprime réponses et progressions
+- 1 session par couple par deck (contrainte unique Supabase)
 
-## Important files
+## État des decks
+
+Tous les 5 decks ont 60 cartes avec couverture complète des 3 subthèmes (20 playful / 20 romantic / 20 chemistry).
+
+## Prochaines étapes
+
+1. anti-répétition et historique de sessions (pour éviter de revoir les mêmes cartes à chaque replay)
+2. polish de `/couple` : montrer la progression de chaque deck (cartes vues, session complétée)
+3. deck `dare_v1` : valider le flow complet en conditions réelles
+
+## Fichiers importants
+
 - `app/couple.tsx`
-- `app/play/[deck].tsx` or current play screen
-- `data/decks/who-is-v1.ts`
-- `data/decks/index.ts`
+- `app/play/[deck].tsx`
 - `lib/game.ts`
+- `lib/game-session.ts`
+- `data/decks/index.ts`
 - `types/game.ts`
+- `supabase/schema.sql`
