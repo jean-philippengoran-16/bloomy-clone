@@ -220,6 +220,16 @@ export async function updateMyGameSessionProgress(
   return data as GameSessionProgress;
 }
 
+export async function loadCoupleActiveSessions(coupleId: string): Promise<DeckId[]> {
+  const { data, error } = await supabase
+    .from('game_sessions')
+    .select('deck_id')
+    .eq('couple_id', coupleId);
+
+  if (error) throw error;
+  return (data ?? []).map((row) => row.deck_id as DeckId);
+}
+
 export async function resetGameSession(
   sessionId: string,
   coupleId: string,

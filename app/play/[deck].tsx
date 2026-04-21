@@ -81,6 +81,14 @@ const ANSWER_LABELS: Record<GameAnswer, string> = {
   skipped: 'Passé',
 };
 
+const DECK_ACCENT: Record<PlayMode, string> = {
+  who_is:          '#E07A5F',
+  would_you_rather: '#5C5F7A',
+  conversation:    '#C4A882',
+  guided_choice:   '#2B2D42',
+  dare:            '#B85A3A',
+};
+
 const SUBTHEME_LABELS: Record<Subtheme, string> = {
   playful: 'Complice',
   romantic: 'Romantique',
@@ -213,6 +221,7 @@ export default function PlayScreen() {
   const card = cards[currentIndex];
   const cardAnswers = cardAnswerState.cardId === card?.id ? cardAnswerState.answers : EMPTY_ANSWERS;
   const activeDeck = deckDef ?? null;
+  const deckAccent = activeDeck ? DECK_ACCENT[activeDeck.playMode] : '#E07A5F';
   const isWouldYouRather =
     !!activeDeck && !!card && activeDeck.playMode === 'would_you_rather' && isWouldYouRatherCard(card);
   const isGuidedChoice =
@@ -244,7 +253,7 @@ export default function PlayScreen() {
   const nextLabel = isLastCard ? 'Terminer la session →' : 'Carte suivante →';
 
   useEffect(() => {
-    if (!session || !couple || !card) return;
+    if (!session || !couple || !card || sessionComplete) return;
 
     const activeSession = session;
     const activeCouple = couple;
@@ -258,9 +267,18 @@ export default function PlayScreen() {
           activeCouple
         );
         if (!cancelled) {
-          setCardAnswerState({
-            cardId: card.id,
-            answers: nextAnswers,
+          setCardAnswerState((current) => {
+            if (
+              current.cardId === card.id &&
+              current.answers.myAnswer === nextAnswers.myAnswer &&
+              current.answers.partnerAnswer === nextAnswers.partnerAnswer &&
+              current.answers.partnerAnswered === nextAnswers.partnerAnswered &&
+              current.answers.myCustomText === nextAnswers.myCustomText &&
+              current.answers.partnerCustomText === nextAnswers.partnerCustomText
+            ) {
+              return current;
+            }
+            return { cardId: card.id, answers: nextAnswers };
           });
         }
       } catch {
@@ -271,10 +289,7 @@ export default function PlayScreen() {
     setCardAnswerState((current) =>
       current.cardId === card.id
         ? current
-        : {
-            cardId: null,
-            answers: EMPTY_ANSWERS,
-          }
+        : { cardId: null, answers: EMPTY_ANSWERS }
     );
     refreshCardAnswers();
     const timer = setInterval(refreshCardAnswers, 4000);
@@ -283,7 +298,7 @@ export default function PlayScreen() {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [session?.id, couple?.id, card?.id]);
+  }, [session?.id, couple?.id, card?.id, sessionComplete]);
 
   useEffect(() => {
     if (!isGuidedChoice) {
@@ -487,7 +502,7 @@ export default function PlayScreen() {
 
   function getMyAnswerLabel(): string {
     if (isConversation) {
-      return cardAnswers.myAnswer ? 'Terminé' : 'Pas encore fait';
+      return cardAnswers.myAnswer ? 'Terminé' : 'Pas encore';
     }
     if (isDare) {
       if (cardAnswers.myAnswer === 'completed') return "On l'a fait";
@@ -518,12 +533,12 @@ export default function PlayScreen() {
     }
     if (isGuidedChoice) {
       if (!cardAnswers.partnerAnswered || !cardAnswers.partnerAnswer) {
-        return 'En attente de sa réponse';
+        return 'En attente';
       }
       return getGuidedChoiceLabel(cardAnswers.partnerAnswer, cardAnswers.partnerCustomText);
     }
     if (!cardAnswers.partnerAnswered || !cardAnswers.partnerAnswer) {
-      return 'En attente de sa réponse';
+      return 'En attente';
     }
     if (isWouldYouRather) {
       return cardAnswers.partnerAnswer === 'option_a' ? card.optionA : card.optionB;
@@ -573,6 +588,7 @@ export default function PlayScreen() {
       <View style={styles.screen}>
         <Stack.Screen options={{ headerShown: false }} />
         <StatusBar style="dark" />
+        <View style={[styles.deckAccentStrip, { backgroundColor: deckAccent }]} />
         <View style={[styles.centered, styles.completionWrap]}>
           <View style={styles.completionCard}>
             <View style={styles.completionIconWrap}>
@@ -587,7 +603,7 @@ export default function PlayScreen() {
               onPress={handleReplay}
               accessibilityRole="button"
             >
-              <Text style={styles.ctaText}>Rejouer →</Text>
+              <Text style={styles.ctaText}>Nouvelle session →</Text>
             </Pressable>
             <Pressable
               style={({ pressed }) => [styles.secondary, pressed && styles.secondaryPressed]}
@@ -607,6 +623,7 @@ export default function PlayScreen() {
     <View style={styles.screen}>
       <Stack.Screen options={{ headerShown: false }} />
       <StatusBar style="dark" />
+      <View style={[styles.deckAccentStrip, { backgroundColor: deckAccent }]} />
 
       <View style={styles.topBar}>
         <Pressable
@@ -616,9 +633,17 @@ export default function PlayScreen() {
         >
           <Text style={styles.backText}>←</Text>
         </Pressable>
-        <Text style={styles.progress}>
-          Carte {currentIndex + 1} sur {sessionLength}
-        </Text>
+        <View style={styles.progressSegments}>
+          {Array.from({ length: sessionLength }).map((_, i) => (
+            <View
+              key={i}
+              style={[
+                styles.progressSegment,
+                { backgroundColor: i <= currentIndex ? deckAccent : '#E9D8C8' },
+              ]}
+            />
+          ))}
+        </View>
         <View style={[styles.subthemeBadge, { backgroundColor: subthemeStyle.bg }]}>
           <Text style={[styles.subthemeText, { color: subthemeStyle.text }]}>
             {SUBTHEME_LABELS[card.subtheme]}
@@ -633,7 +658,7 @@ export default function PlayScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.card}>
-          <Text style={styles.deckLabel}>{resolvedDeck.title}</Text>
+          <Text style={[styles.deckLabel, { color: deckAccent }]}>{resolvedDeck.title}</Text>
           <Text style={styles.prompt}>{card.prompt}</Text>
           {isWouldYouRather ? (
             <View style={styles.wyrChoices}>
@@ -652,6 +677,7 @@ export default function PlayScreen() {
                       style={({ pressed }) => [
                         styles.wyrChoiceCard,
                         isSelected && styles.answerBtnSelected,
+                        isSelected && { backgroundColor: deckAccent, borderColor: deckAccent },
                         pressed && !savingAnswer && styles.answerBtnPressed,
                         !!savingAnswer && !isSavingThisOption && styles.navBtnDisabled,
                       ]}
@@ -678,14 +704,14 @@ export default function PlayScreen() {
         <View style={styles.statusRow}>
           <View style={styles.statusCard}>
             <Text style={styles.statusLabel}>
-              {isConversation ? 'Mon avancement' : isDare ? 'Mon statut' : 'Ma réponse'}
+              {isConversation ? 'Mon avancement' : isDare ? 'Ma décision' : 'Ma réponse'}
             </Text>
             <Text style={styles.statusValue}>{getMyAnswerLabel()}</Text>
           </View>
 
           <View style={styles.statusCard}>
             <Text style={styles.statusLabel}>
-              {isConversation ? 'Son avancement' : isDare ? 'Son statut' : 'Sa réponse'}
+              {isConversation ? 'Son avancement' : isDare ? 'Sa décision' : 'Sa réponse'}
             </Text>
             <Text style={styles.statusValue}>{getPartnerAnswerLabel()}</Text>
           </View>
@@ -699,6 +725,7 @@ export default function PlayScreen() {
                 styles.answerBtn,
                 styles.conversationBtn,
                 cardAnswers.myAnswer === 'completed' && styles.answerBtnSelected,
+                cardAnswers.myAnswer === 'completed' && { backgroundColor: deckAccent, borderColor: deckAccent },
                 pressed && !savingAnswer && styles.answerBtnPressed,
               ]}
               onPress={handleCompleteConversationCard}
@@ -725,7 +752,7 @@ export default function PlayScreen() {
                 disabled={!!savingAnswer}
                 accessibilityRole="button"
               >
-                <Text style={styles.secondaryText}>Marquer comme à reprendre</Text>
+                <Text style={styles.secondaryText}>Revenir sur cette question</Text>
               </Pressable>
             ) : null}
           </View>
@@ -744,6 +771,7 @@ export default function PlayScreen() {
                     style={({ pressed }) => [
                       styles.answerBtn,
                       isSelected && styles.answerBtnSelected,
+                      isSelected && { backgroundColor: deckAccent, borderColor: deckAccent },
                       pressed && !savingAnswer && styles.answerBtnPressed,
                     ]}
                     onPress={() => handleDareDecision(option.id as CompletionValue)}
@@ -771,6 +799,7 @@ export default function PlayScreen() {
                     styles.answerBtn,
                     styles.chemistryOptionBtn,
                     isSelected && styles.answerBtnSelected,
+                    isSelected && { backgroundColor: deckAccent, borderColor: deckAccent },
                     pressed && !savingAnswer && styles.answerBtnPressed,
                   ]}
                   onPress={() => handleChemistryOptionPress(option.id as AnswerBasedValue)}
@@ -835,6 +864,7 @@ export default function PlayScreen() {
                   style={({ pressed }) => [
                     styles.answerBtn,
                     isSelected && styles.answerBtnSelected,
+                    isSelected && { backgroundColor: deckAccent, borderColor: deckAccent },
                     pressed && !savingAnswer && styles.answerBtnPressed,
                   ]}
                   onPress={() => handleAnswer(option.id as AnswerBasedValue)}
@@ -880,7 +910,7 @@ export default function PlayScreen() {
           </Pressable>
         </View>
 
-        {savingAnswer ? <Text style={styles.helperText}>Enregistrement...</Text> : null}
+        {savingAnswer ? <Text style={styles.helperText}>En cours…</Text> : null}
         {actionError ? <Text style={styles.errorText}>{actionError}</Text> : null}
       </ScrollView>
     </View>
@@ -939,11 +969,17 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#5C677D',
   },
-  progress: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#8D99AE',
-    letterSpacing: 0.3,
+  progressSegments: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    marginHorizontal: 12,
+  },
+  progressSegment: {
+    flex: 1,
+    height: 3,
+    borderRadius: 2,
   },
   subthemeBadge: {
     borderRadius: 20,
@@ -977,11 +1013,11 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   prompt: {
-    fontSize: 23,
+    fontSize: 26,
     fontWeight: '700',
     color: '#2B2D42',
     textAlign: 'center',
-    lineHeight: 34,
+    lineHeight: 38,
   },
   wyrChoices: {
     width: '100%',
@@ -1038,25 +1074,25 @@ const styles = StyleSheet.create({
   statusCard: {
     flex: 1,
     backgroundColor: '#FFFDF9',
-    borderRadius: 16,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: '#E9D8C8',
-    paddingVertical: 16,
-    paddingHorizontal: 14,
-    gap: 6,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    gap: 5,
   },
   statusLabel: {
-    fontSize: 12,
+    fontSize: 10,
     fontWeight: '700',
     color: '#8D99AE',
     textTransform: 'uppercase',
     letterSpacing: 0.8,
   },
   statusValue: {
-    fontSize: 15,
-    fontWeight: '600',
+    fontSize: 14,
+    fontWeight: '500',
     color: '#2B2D42',
-    lineHeight: 22,
+    lineHeight: 20,
   },
   conversationWrap: {
     gap: 10,
@@ -1122,7 +1158,15 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   navBtnDisabled: {
-    opacity: 0.45,
+    opacity: 0.5,
+  },
+  deckAccentStrip: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 3,
+    zIndex: 10,
   },
   cta: {
     backgroundColor: '#E07A5F',
