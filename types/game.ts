@@ -5,15 +5,20 @@ export type DeckId =
   | 'chemistry_v1'
   | 'dare_v1';
 
-export type PlayMode = 'who_is' | 'would_you_rather';
+export type AnswerBasedPlayMode = 'who_is' | 'would_you_rather';
+export type CompletionBasedPlayMode = 'conversation';
+export type PlayMode = AnswerBasedPlayMode | CompletionBasedPlayMode;
 export type Subtheme = 'playful' | 'romantic' | 'chemistry';
 export type Tone = 'light' | 'warm' | 'sensual';
 export type Profile = 'universal' | 'alliance';
 export type WhoIsAnswer = 'me' | 'you' | 'both';
 export type WouldYouRatherAnswer = 'option_a' | 'option_b';
-export type GameAnswer = WhoIsAnswer | WouldYouRatherAnswer;
+export type ConversationAnswer = 'completed';
+export type AnswerBasedValue = WhoIsAnswer | WouldYouRatherAnswer;
+export type CompletionValue = ConversationAnswer;
+export type GameAnswer = AnswerBasedValue | CompletionValue;
 
-export interface GameCard {
+export interface BaseGameCard {
   id: string;
   deck: DeckId;
   subtheme: Subtheme;
@@ -24,6 +29,18 @@ export interface GameCard {
   audience: 'married_couple';
   tone: Tone;
 }
+
+export interface StandardGameCard extends BaseGameCard {
+  deck: Exclude<DeckId, 'would_you_rather_v1'>;
+}
+
+export interface WouldYouRatherCard extends BaseGameCard {
+  deck: 'would_you_rather_v1';
+  optionA: string;
+  optionB: string;
+}
+
+export type GameCard = StandardGameCard | WouldYouRatherCard;
 
 export interface DeckDefinition {
   id: DeckId;

@@ -117,6 +117,10 @@ export default function CoupleScreen() {
   const featuredDeck = DECK_REGISTRY[DECK_ORDER[0]];
   const gridDecks = DECK_ORDER.slice(1).map((id) => DECK_REGISTRY[id]);
 
+  function getDeckActionLabel(deckId: string): string {
+    return deckId === 'connection_v1' ? 'Ouvrir →' : 'Jouer →';
+  }
+
   return (
     <KeyboardAvoidingView
       style={styles.flex}
@@ -183,7 +187,7 @@ export default function CoupleScreen() {
                     >
                       <Text style={styles.deckTileTitle}>{deck.title}</Text>
                       <View style={styles.activeBadge}>
-                        <Text style={styles.activeText}>Jouer →</Text>
+                        <Text style={styles.activeText}>{getDeckActionLabel(deck.id)}</Text>
                       </View>
                       <Text style={styles.deckTileDesc} numberOfLines={2}>
                         {deck.description}

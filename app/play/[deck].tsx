@@ -13,26 +13,35 @@ import { getDeck } from '@/data/decks/index';
 import { ensureAnonymousSession } from '@/lib/auth';
 import { getMyCouple, type Couple } from '@/lib/couple';
 import {
+  clearGameSessionCompletion,
   createOrResumeGameSession,
   loadGameSessionCardAnswers,
   loadMyGameSessionProgress,
   loadSessionCards,
   saveGameSessionAnswer,
+  saveGameSessionCompletion,
   updateMyGameSessionProgress,
 } from '@/lib/game-session';
 import type {
+  AnswerBasedValue,
   GameAnswer,
   GameCard,
   GameSession,
   GameSessionCardAnswers,
   PlayMode,
   Subtheme,
+  WouldYouRatherCard,
 } from '@/types/game';
 
 const EMPTY_ANSWERS: GameSessionCardAnswers = {
   myAnswer: null,
   partnerAnswer: null,
   partnerAnswered: false,
+};
+
+type CardAnswerState = {
+  cardId: string | null;
+  answers: GameSessionCardAnswers;
 };
 
 const ANSWER_OPTIONS: Record<PlayMode, { id: GameAnswer; label: string }[]> = {
@@ -45,6 +54,7 @@ const ANSWER_OPTIONS: Record<PlayMode, { id: GameAnswer; label: string }[]> = {
     { id: 'option_a', label: 'Option A' },
     { id: 'option_b', label: 'Option B' },
   ],
+  conversation: [{ id: 'completed', label: "On en a parlé" }],
 };
 
 const ANSWER_LABELS: Record<GameAnswer, string> = {
@@ -53,6 +63,7 @@ const ANSWER_LABELS: Record<GameAnswer, string> = {
   both: 'Les deux',
   option_a: 'Option A',
   option_b: 'Option B',
+  completed: 'Répondu',
 };
 
 const SUBTHEME_LABELS: Record<Subtheme, string> = {
@@ -67,7 +78,24 @@ const SUBTHEME_COLORS: Record<Subtheme, { bg: string; text: string }> = {
   chemistry: { bg: '#2B2D42', text: '#FFFDF9' },
 };
 
+function isWouldYouRatherCard(card: GameCard): card is WouldYouRatherCard {
+  return card.deck === 'would_you_rather_v1';
+}
+
 function formatScreenError(error: unknown): string {
+  if (error && typeof error === 'object') {
+    const maybeError = error as { code?: string; message?: string; details?: string };
+
+    if (
+      maybeError.code === '23514' &&
+      `${maybeError.message ?? ''} ${maybeError.details ?? ''}`.includes(
+        'game_session_answers_valid_answer'
+      )
+    ) {
+      return "Le schéma Supabase n'accepte pas encore l'état de progression de ce deck.";
+    }
+  }
+
   if (!(error instanceof Error)) {
     return 'Une erreur est survenue.';
   }
@@ -97,7 +125,10 @@ export default function PlayScreen() {
   const [session, setSession] = useState<GameSession | null>(null);
   const [cards, setCards] = useState<GameCard[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [cardAnswers, setCardAnswers] = useState<GameSessionCardAnswers>(EMPTY_ANSWERS);
+  const [cardAnswerState, setCardAnswerState] = useState<CardAnswerState>({
+    cardId: null,
+    answers: EMPTY_ANSWERS,
+  });
   const [savingAnswer, setSavingAnswer] = useState<GameAnswer | null>(null);
   const [navigating, setNavigating] = useState<'prev' | 'next' | null>(null);
 
@@ -137,7 +168,10 @@ export default function PlayScreen() {
         setSession(sharedSession);
         setCards(sessionCards);
         setCurrentIndex(safeIndex);
-        setCardAnswers(currentAnswers);
+        setCardAnswerState({
+          cardId: currentCard?.id ?? null,
+          answers: currentAnswers,
+        });
       } catch (error) {
         if (cancelled) return;
         setScreenError(formatScreenError(error));
@@ -156,6 +190,7 @@ export default function PlayScreen() {
   }, [deckDef?.id]);
 
   const card = cards[currentIndex];
+  const cardAnswers = cardAnswerState.cardId === card?.id ? cardAnswerState.answers : EMPTY_ANSWERS;
 
   useEffect(() => {
     if (!session || !couple || !card) return;
@@ -172,13 +207,24 @@ export default function PlayScreen() {
           activeCouple
         );
         if (!cancelled) {
-          setCardAnswers(nextAnswers);
+          setCardAnswerState({
+            cardId: card.id,
+            answers: nextAnswers,
+          });
         }
       } catch {
         // Ignore polling errors for V1
       }
     }
 
+    setCardAnswerState((current) =>
+      current.cardId === card.id
+        ? current
+        : {
+            cardId: null,
+            answers: EMPTY_ANSWERS,
+          }
+    );
     refreshCardAnswers();
     const timer = setInterval(refreshCardAnswers, 4000);
 
@@ -217,7 +263,16 @@ export default function PlayScreen() {
     );
   }
 
-  const answerOptions = ANSWER_OPTIONS[deckDef.playMode];
+  const activeDeck = deckDef;
+  const isWouldYouRather = activeDeck.playMode === 'would_you_rather' && isWouldYouRatherCard(card);
+  const answerOptions =
+    isWouldYouRather
+      ? [
+          { id: 'option_a' as const, label: card.optionA },
+          { id: 'option_b' as const, label: card.optionB },
+        ]
+      : ANSWER_OPTIONS[activeDeck.playMode];
+  const isConversation = activeDeck.playMode === 'conversation';
   const subthemeStyle = SUBTHEME_COLORS[card.subtheme];
   const sessionLength = cards.length;
   const canGoPrev = currentIndex > 0 && !savingAnswer && !navigating;
@@ -225,20 +280,57 @@ export default function PlayScreen() {
     currentIndex < sessionLength - 1 && !!cardAnswers.myAnswer && !savingAnswer && !navigating;
   const nextLabel = currentIndex === sessionLength - 1 ? 'Session complète' : 'Carte suivante →';
 
-  async function handleAnswer(answer: GameAnswer) {
+  async function refreshCurrentCardAnswers() {
+    if (!session || !couple) return;
+
+    const refreshedAnswers = await loadGameSessionCardAnswers(session.id, card.id, couple);
+    setCardAnswerState({
+      cardId: card.id,
+      answers: refreshedAnswers,
+    });
+  }
+
+  async function handleAnswer(answer: AnswerBasedValue) {
     if (!session || !couple) return;
 
     setActionError(null);
     setSavingAnswer(answer);
-    setCardAnswers((current) => ({
-      ...current,
-      myAnswer: answer,
-    }));
 
     try {
       await saveGameSessionAnswer(session.id, card.id, answer);
-      const refreshedAnswers = await loadGameSessionCardAnswers(session.id, card.id, couple);
-      setCardAnswers(refreshedAnswers);
+      await refreshCurrentCardAnswers();
+    } catch (error) {
+      setActionError(formatScreenError(error));
+    } finally {
+      setSavingAnswer(null);
+    }
+  }
+
+  async function handleCompleteConversationCard() {
+    if (!session || !couple) return;
+
+    setActionError(null);
+    setSavingAnswer('completed');
+
+    try {
+      await saveGameSessionCompletion(session.id, card.id);
+      await refreshCurrentCardAnswers();
+    } catch (error) {
+      setActionError(formatScreenError(error));
+    } finally {
+      setSavingAnswer(null);
+    }
+  }
+
+  async function handleClearConversationCompletion() {
+    if (!session || !couple) return;
+
+    setActionError(null);
+    setSavingAnswer('completed');
+
+    try {
+      await clearGameSessionCompletion(session.id, card.id);
+      await refreshCurrentCardAnswers();
     } catch (error) {
       setActionError(formatScreenError(error));
     } finally {
@@ -262,12 +354,39 @@ export default function PlayScreen() {
     try {
       await updateMyGameSessionProgress(session.id, nextIndex);
       setCurrentIndex(nextIndex);
-      setCardAnswers(EMPTY_ANSWERS);
+      setCardAnswerState({
+        cardId: null,
+        answers: EMPTY_ANSWERS,
+      });
     } catch (error) {
       setActionError(formatScreenError(error));
     } finally {
       setNavigating(null);
     }
+  }
+
+  function getMyAnswerLabel(): string {
+    if (isConversation) {
+      return cardAnswers.myAnswer ? 'Terminé' : 'Pas encore fait';
+    }
+    if (!cardAnswers.myAnswer) return 'Pas encore de réponse';
+    if (isWouldYouRather) {
+      return cardAnswers.myAnswer === 'option_a' ? card.optionA : card.optionB;
+    }
+    return ANSWER_LABELS[cardAnswers.myAnswer];
+  }
+
+  function getPartnerAnswerLabel(): string {
+    if (isConversation) {
+      return cardAnswers.partnerAnswered && cardAnswers.partnerAnswer ? 'Terminé' : 'En attente';
+    }
+    if (!cardAnswers.partnerAnswered || !cardAnswers.partnerAnswer) {
+      return 'En attente de sa réponse';
+    }
+    if (isWouldYouRather) {
+      return cardAnswers.partnerAnswer === 'option_a' ? card.optionA : card.optionB;
+    }
+    return ANSWER_LABELS[cardAnswers.partnerAnswer];
   }
 
   return (
@@ -299,51 +418,127 @@ export default function PlayScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.card}>
-          <Text style={styles.deckLabel}>{deckDef.title}</Text>
+          <Text style={styles.deckLabel}>{activeDeck.title}</Text>
           <Text style={styles.prompt}>{card.prompt}</Text>
+          {isWouldYouRather ? (
+            <View style={styles.wyrChoices}>
+              {answerOptions.map((option, index) => {
+                const isSelected = cardAnswers.myAnswer === option.id;
+                const isSavingThisOption = savingAnswer === option.id;
+
+                return (
+                  <View key={option.id} style={styles.wyrChoiceBlock}>
+                    {index === 1 ? (
+                      <View style={styles.wyrDivider}>
+                        <Text style={styles.wyrDividerText}>ou</Text>
+                      </View>
+                    ) : null}
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.wyrChoiceCard,
+                        isSelected && styles.answerBtnSelected,
+                        pressed && !savingAnswer && styles.answerBtnPressed,
+                        !!savingAnswer && !isSavingThisOption && styles.navBtnDisabled,
+                      ]}
+                      onPress={() => handleAnswer(option.id as AnswerBasedValue)}
+                      disabled={!!savingAnswer}
+                      accessibilityRole="button"
+                    >
+                      <Text
+                        style={[
+                          styles.wyrChoiceText,
+                          isSelected && styles.answerBtnTextSelected,
+                        ]}
+                      >
+                        {option.label}
+                      </Text>
+                    </Pressable>
+                  </View>
+                );
+              })}
+            </View>
+          ) : null}
         </View>
 
         <View style={styles.statusRow}>
           <View style={styles.statusCard}>
-            <Text style={styles.statusLabel}>Ma réponse</Text>
-            <Text style={styles.statusValue}>
-              {cardAnswers.myAnswer ? ANSWER_LABELS[cardAnswers.myAnswer] : 'Pas encore répondu'}
+            <Text style={styles.statusLabel}>
+              {isConversation ? 'Mon avancement' : 'Ma réponse'}
             </Text>
+            <Text style={styles.statusValue}>{getMyAnswerLabel()}</Text>
           </View>
 
           <View style={styles.statusCard}>
-            <Text style={styles.statusLabel}>Sa réponse</Text>
-            <Text style={styles.statusValue}>
-              {cardAnswers.partnerAnswered && cardAnswers.partnerAnswer
-                ? ANSWER_LABELS[cardAnswers.partnerAnswer]
-                : 'En attente de sa réponse'}
+            <Text style={styles.statusLabel}>
+              {isConversation ? 'Son avancement' : 'Sa réponse'}
             </Text>
+            <Text style={styles.statusValue}>{getPartnerAnswerLabel()}</Text>
           </View>
         </View>
 
-        <View style={styles.answersCol}>
-          {answerOptions.map((option) => {
-            const isSelected = cardAnswers.myAnswer === option.id;
-
-            return (
-              <Pressable
-                key={option.id}
-                style={({ pressed }) => [
-                  styles.answerBtn,
-                  isSelected && styles.answerBtnSelected,
-                  pressed && !savingAnswer && styles.answerBtnPressed,
+        {isConversation ? (
+          <View style={styles.conversationWrap}>
+            <Text style={styles.conversationHelper}>Prenez un moment pour en parler à deux.</Text>
+            <Pressable
+              style={({ pressed }) => [
+                styles.answerBtn,
+                styles.conversationBtn,
+                cardAnswers.myAnswer === 'completed' && styles.answerBtnSelected,
+                pressed && !savingAnswer && styles.answerBtnPressed,
+              ]}
+              onPress={handleCompleteConversationCard}
+              disabled={!!savingAnswer}
+              accessibilityRole="button"
+            >
+              <Text
+                style={[
+                  styles.answerBtnText,
+                  cardAnswers.myAnswer === 'completed' && styles.answerBtnTextSelected,
                 ]}
-                onPress={() => handleAnswer(option.id)}
+              >
+                On en a parlé
+              </Text>
+            </Pressable>
+            {cardAnswers.myAnswer === 'completed' ? (
+              <Pressable
+                style={({ pressed }) => [
+                  styles.secondary,
+                  pressed && styles.secondaryPressed,
+                  !!savingAnswer && styles.navBtnDisabled,
+                ]}
+                onPress={handleClearConversationCompletion}
                 disabled={!!savingAnswer}
                 accessibilityRole="button"
               >
-                <Text style={[styles.answerBtnText, isSelected && styles.answerBtnTextSelected]}>
-                  {option.label}
-                </Text>
+                <Text style={styles.secondaryText}>Marquer comme à reprendre</Text>
               </Pressable>
-            );
-          })}
-        </View>
+            ) : null}
+          </View>
+        ) : isWouldYouRather ? null : (
+          <View style={styles.answersCol}>
+            {answerOptions.map((option) => {
+              const isSelected = cardAnswers.myAnswer === option.id;
+
+              return (
+                <Pressable
+                  key={option.id}
+                  style={({ pressed }) => [
+                    styles.answerBtn,
+                    isSelected && styles.answerBtnSelected,
+                    pressed && !savingAnswer && styles.answerBtnPressed,
+                  ]}
+                  onPress={() => handleAnswer(option.id as AnswerBasedValue)}
+                  disabled={!!savingAnswer}
+                  accessibilityRole="button"
+                >
+                  <Text style={[styles.answerBtnText, isSelected && styles.answerBtnTextSelected]}>
+                    {option.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        )}
 
         <View style={styles.navRow}>
           <Pressable
@@ -481,6 +676,41 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 34,
   },
+  wyrChoices: {
+    width: '100%',
+    gap: 10,
+  },
+  wyrChoiceBlock: {
+    gap: 10,
+  },
+  wyrDivider: {
+    alignItems: 'center',
+  },
+  wyrDividerText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#C4A882',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  wyrChoiceCard: {
+    backgroundColor: '#F9F6F0',
+    borderRadius: 18,
+    borderWidth: 1.5,
+    borderColor: '#E9D8C8',
+    paddingVertical: 22,
+    paddingHorizontal: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 108,
+  },
+  wyrChoiceText: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#2B2D42',
+    textAlign: 'center',
+    lineHeight: 28,
+  },
   statusRow: {
     flexDirection: 'row',
     gap: 10,
@@ -507,6 +737,18 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#2B2D42',
     lineHeight: 22,
+  },
+  conversationWrap: {
+    gap: 10,
+  },
+  conversationHelper: {
+    fontSize: 15,
+    color: '#5C677D',
+    textAlign: 'center',
+    lineHeight: 24,
+  },
+  conversationBtn: {
+    marginTop: 2,
   },
   answersCol: {
     gap: 10,

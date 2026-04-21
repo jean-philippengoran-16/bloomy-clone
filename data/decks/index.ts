@@ -1,4 +1,5 @@
 import type { DeckId, DeckDefinition } from '@/types/game';
+import { CONNECTION_V1 } from './connection-v1';
 import { WHO_IS_V1 } from './who-is-v1';
 import { WOULD_YOU_RATHER_V1 } from './would-you-rather-v1';
 
@@ -23,12 +24,12 @@ export const DECK_REGISTRY: Record<DeckId, DeckDefinition> = {
   },
   connection_v1: {
     id: 'connection_v1',
-    playMode: 'would_you_rather',
+    playMode: 'conversation',
     title: 'Connexion',
-    subtitle: 'Set 1',
-    description: 'Questions profondes, vraies réponses. Plonger ensemble.',
-    available: false,
-    cards: [],
+    subtitle: 'Set 1 · 60 cartes',
+    description: 'Des questions douces et vraies pour écouter, remercier et rêver ensemble.',
+    available: true,
+    cards: CONNECTION_V1,
   },
   chemistry_v1: {
     id: 'chemistry_v1',

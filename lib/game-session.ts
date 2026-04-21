@@ -1,6 +1,7 @@
 import type {
+  AnswerBasedValue,
+  CompletionValue,
   DeckId,
-  GameAnswer,
   GameCard,
   GameSession,
   GameSessionAnswer,
@@ -86,10 +87,10 @@ export function loadSessionCards(session: Pick<GameSession, 'deck_id' | 'card_id
   return cards;
 }
 
-export async function saveGameSessionAnswer(
+async function upsertGameSessionResponseValue(
   sessionId: string,
   cardId: string,
-  answer: GameAnswer
+  value: AnswerBasedValue | CompletionValue
 ): Promise<GameSessionAnswer> {
   const userId = await requireUserId();
   const now = new Date().toISOString();
@@ -101,7 +102,7 @@ export async function saveGameSessionAnswer(
         session_id: sessionId,
         card_id: cardId,
         user_id: userId,
-        answer,
+        answer: value,
         updated_at: now,
       },
       { onConflict: 'session_id,card_id,user_id' }
@@ -111,6 +112,39 @@ export async function saveGameSessionAnswer(
 
   if (error) throw error;
   return data as GameSessionAnswer;
+}
+
+export async function saveGameSessionAnswer(
+  sessionId: string,
+  cardId: string,
+  answer: AnswerBasedValue
+): Promise<GameSessionAnswer> {
+  return upsertGameSessionResponseValue(sessionId, cardId, answer);
+}
+
+export async function saveGameSessionCompletion(
+  sessionId: string,
+  cardId: string,
+  completion: CompletionValue = 'completed'
+): Promise<GameSessionAnswer> {
+  return upsertGameSessionResponseValue(sessionId, cardId, completion);
+}
+
+export async function clearGameSessionAnswer(sessionId: string, cardId: string): Promise<void> {
+  const userId = await requireUserId();
+
+  const { error } = await supabase
+    .from('game_session_answers')
+    .delete()
+    .eq('session_id', sessionId)
+    .eq('card_id', cardId)
+    .eq('user_id', userId);
+
+  if (error) throw error;
+}
+
+export async function clearGameSessionCompletion(sessionId: string, cardId: string): Promise<void> {
+  return clearGameSessionAnswer(sessionId, cardId);
 }
 
 export async function loadGameSessionCardAnswers(

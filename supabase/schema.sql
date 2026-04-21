@@ -256,7 +256,7 @@ CREATE TABLE IF NOT EXISTS public.game_session_answers (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT game_session_answers_valid_answer CHECK (
-    answer IN ('me', 'you', 'both', 'option_a', 'option_b')
+    answer IN ('me', 'you', 'both', 'option_a', 'option_b', 'completed')
   )
 );
 
