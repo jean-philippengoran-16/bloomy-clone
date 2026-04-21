@@ -1,4 +1,5 @@
 import type { DeckId, DeckDefinition } from '@/types/game';
+import { CHEMISTRY_V1 } from './chemistry-v1';
 import { CONNECTION_V1 } from './connection-v1';
 import { WHO_IS_V1 } from './who-is-v1';
 import { WOULD_YOU_RATHER_V1 } from './would-you-rather-v1';
@@ -33,12 +34,12 @@ export const DECK_REGISTRY: Record<DeckId, DeckDefinition> = {
   },
   chemistry_v1: {
     id: 'chemistry_v1',
-    playMode: 'would_you_rather',
+    playMode: 'guided_choice',
     title: 'Chemistry',
-    subtitle: 'Set 1',
-    description: 'Juste entre vous deux. Séduisant, intime, élégant.',
-    available: false,
-    cards: [],
+    subtitle: 'Set 1 · 60 cartes',
+    description: 'Des élans guidés, des réponses nuancées et une vraie place pour votre désir à deux.',
+    available: true,
+    cards: CHEMISTRY_V1,
   },
   dare_v1: {
     id: 'dare_v1',

@@ -253,12 +253,44 @@ CREATE TABLE IF NOT EXISTS public.game_session_answers (
   card_id    text        NOT NULL,
   user_id    uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   answer     text        NOT NULL,
+  custom_text text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT game_session_answers_valid_answer CHECK (
-    answer IN ('me', 'you', 'both', 'option_a', 'option_b', 'completed')
+    answer IN (
+      'me',
+      'you',
+      'both',
+      'option_a',
+      'option_b',
+      'option_c',
+      'option_d',
+      'other',
+      'completed'
+    )
   )
 );
+
+ALTER TABLE public.game_session_answers
+  ADD COLUMN IF NOT EXISTS custom_text text;
+
+ALTER TABLE public.game_session_answers
+  DROP CONSTRAINT IF EXISTS game_session_answers_valid_answer;
+
+ALTER TABLE public.game_session_answers
+  ADD CONSTRAINT game_session_answers_valid_answer CHECK (
+    answer IN (
+      'me',
+      'you',
+      'both',
+      'option_a',
+      'option_b',
+      'option_c',
+      'option_d',
+      'other',
+      'completed'
+    )
+  );
 
 CREATE TABLE IF NOT EXISTS public.game_session_progress (
   id            uuid        PRIMARY KEY DEFAULT gen_random_uuid(),

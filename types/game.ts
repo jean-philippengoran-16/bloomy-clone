@@ -5,7 +5,7 @@ export type DeckId =
   | 'chemistry_v1'
   | 'dare_v1';
 
-export type AnswerBasedPlayMode = 'who_is' | 'would_you_rather';
+export type AnswerBasedPlayMode = 'who_is' | 'would_you_rather' | 'guided_choice';
 export type CompletionBasedPlayMode = 'conversation';
 export type PlayMode = AnswerBasedPlayMode | CompletionBasedPlayMode;
 export type Subtheme = 'playful' | 'romantic' | 'chemistry';
@@ -13,8 +13,10 @@ export type Tone = 'light' | 'warm' | 'sensual';
 export type Profile = 'universal' | 'alliance';
 export type WhoIsAnswer = 'me' | 'you' | 'both';
 export type WouldYouRatherAnswer = 'option_a' | 'option_b';
+export type GuidedChoiceAnswer = 'option_a' | 'option_b' | 'option_c' | 'option_d' | 'other';
+export type ChemistryAnswer = GuidedChoiceAnswer;
 export type ConversationAnswer = 'completed';
-export type AnswerBasedValue = WhoIsAnswer | WouldYouRatherAnswer;
+export type AnswerBasedValue = WhoIsAnswer | WouldYouRatherAnswer | GuidedChoiceAnswer;
 export type CompletionValue = ConversationAnswer;
 export type GameAnswer = AnswerBasedValue | CompletionValue;
 
@@ -31,7 +33,7 @@ export interface BaseGameCard {
 }
 
 export interface StandardGameCard extends BaseGameCard {
-  deck: Exclude<DeckId, 'would_you_rather_v1'>;
+  deck: Exclude<DeckId, 'would_you_rather_v1' | 'chemistry_v1'>;
 }
 
 export interface WouldYouRatherCard extends BaseGameCard {
@@ -40,7 +42,15 @@ export interface WouldYouRatherCard extends BaseGameCard {
   optionB: string;
 }
 
-export type GameCard = StandardGameCard | WouldYouRatherCard;
+export interface ChemistryCard extends BaseGameCard {
+  deck: 'chemistry_v1';
+  optionA: string;
+  optionB: string;
+  optionC: string;
+  optionD?: string;
+}
+
+export type GameCard = StandardGameCard | WouldYouRatherCard | ChemistryCard;
 
 export interface DeckDefinition {
   id: DeckId;
@@ -67,6 +77,7 @@ export interface GameSessionAnswer {
   card_id: string;
   user_id: string;
   answer: GameAnswer;
+  custom_text: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -83,5 +94,7 @@ export interface GameSessionProgress {
 export interface GameSessionCardAnswers {
   myAnswer: GameAnswer | null;
   partnerAnswer: GameAnswer | null;
+  myCustomText: string | null;
+  partnerCustomText: string | null;
   partnerAnswered: boolean;
 }

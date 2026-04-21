@@ -5,6 +5,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { Stack, router, useLocalSearchParams } from 'expo-router';
@@ -24,6 +25,7 @@ import {
 } from '@/lib/game-session';
 import type {
   AnswerBasedValue,
+  ChemistryCard,
   GameAnswer,
   GameCard,
   GameSession,
@@ -36,6 +38,8 @@ import type {
 const EMPTY_ANSWERS: GameSessionCardAnswers = {
   myAnswer: null,
   partnerAnswer: null,
+  myCustomText: null,
+  partnerCustomText: null,
   partnerAnswered: false,
 };
 
@@ -54,6 +58,7 @@ const ANSWER_OPTIONS: Record<PlayMode, { id: GameAnswer; label: string }[]> = {
     { id: 'option_a', label: 'Option A' },
     { id: 'option_b', label: 'Option B' },
   ],
+  guided_choice: [],
   conversation: [{ id: 'completed', label: "On en a parlé" }],
 };
 
@@ -63,6 +68,9 @@ const ANSWER_LABELS: Record<GameAnswer, string> = {
   both: 'Les deux',
   option_a: 'Option A',
   option_b: 'Option B',
+  option_c: 'Option C',
+  option_d: 'Option D',
+  other: 'Autre',
   completed: 'Répondu',
 };
 
@@ -82,17 +90,20 @@ function isWouldYouRatherCard(card: GameCard): card is WouldYouRatherCard {
   return card.deck === 'would_you_rather_v1';
 }
 
+function isChemistryCard(card: GameCard): card is ChemistryCard {
+  return card.deck === 'chemistry_v1';
+}
+
 function formatScreenError(error: unknown): string {
   if (error && typeof error === 'object') {
     const maybeError = error as { code?: string; message?: string; details?: string };
+    const errorText = `${maybeError.message ?? ''} ${maybeError.details ?? ''}`;
 
     if (
-      maybeError.code === '23514' &&
-      `${maybeError.message ?? ''} ${maybeError.details ?? ''}`.includes(
-        'game_session_answers_valid_answer'
-      )
+      (maybeError.code === '23514' && errorText.includes('game_session_answers_valid_answer')) ||
+      (maybeError.code === '42703' && errorText.includes('custom_text'))
     ) {
-      return "Le schéma Supabase n'accepte pas encore l'état de progression de ce deck.";
+      return "Le schéma Supabase du jeu doit être mis à jour pour ce deck.";
     }
   }
 
@@ -131,6 +142,8 @@ export default function PlayScreen() {
   });
   const [savingAnswer, setSavingAnswer] = useState<GameAnswer | null>(null);
   const [navigating, setNavigating] = useState<'prev' | 'next' | null>(null);
+  const [chemistryOtherOpen, setChemistryOtherOpen] = useState(false);
+  const [chemistryCustomText, setChemistryCustomText] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -191,6 +204,34 @@ export default function PlayScreen() {
 
   const card = cards[currentIndex];
   const cardAnswers = cardAnswerState.cardId === card?.id ? cardAnswerState.answers : EMPTY_ANSWERS;
+  const activeDeck = deckDef ?? null;
+  const isWouldYouRather =
+    !!activeDeck && !!card && activeDeck.playMode === 'would_you_rather' && isWouldYouRatherCard(card);
+  const isGuidedChoice =
+    !!activeDeck && !!card && activeDeck.playMode === 'guided_choice' && isChemistryCard(card);
+  const isConversation = activeDeck?.playMode === 'conversation';
+  const answerOptions =
+    isWouldYouRather && card
+      ? [
+          { id: 'option_a' as const, label: card.optionA },
+          { id: 'option_b' as const, label: card.optionB },
+        ]
+      : isGuidedChoice && card
+        ? [
+            { id: 'option_a' as const, label: card.optionA },
+            { id: 'option_b' as const, label: card.optionB },
+            { id: 'option_c' as const, label: card.optionC },
+            ...(card.optionD ? [{ id: 'option_d' as const, label: card.optionD }] : []),
+            { id: 'other' as const, label: 'Autre' },
+          ]
+        : activeDeck
+          ? ANSWER_OPTIONS[activeDeck.playMode]
+          : [];
+  const sessionLength = cards.length;
+  const canGoPrev = currentIndex > 0 && !savingAnswer && !navigating;
+  const canGoNext =
+    currentIndex < sessionLength - 1 && !!cardAnswers.myAnswer && !savingAnswer && !navigating;
+  const nextLabel = currentIndex === sessionLength - 1 ? 'Session complète' : 'Carte suivante →';
 
   useEffect(() => {
     if (!session || !couple || !card) return;
@@ -234,6 +275,23 @@ export default function PlayScreen() {
     };
   }, [session?.id, couple?.id, card?.id]);
 
+  useEffect(() => {
+    if (!isGuidedChoice) {
+      setChemistryOtherOpen(false);
+      setChemistryCustomText('');
+      return;
+    }
+
+    if (cardAnswers.myAnswer === 'other') {
+      setChemistryOtherOpen(true);
+      setChemistryCustomText(cardAnswers.myCustomText ?? '');
+      return;
+    }
+
+    setChemistryOtherOpen(false);
+    setChemistryCustomText('');
+  }, [isGuidedChoice, card?.id, cardAnswers.myAnswer, cardAnswers.myCustomText]);
+
   if (loading) {
     return (
       <View style={[styles.screen, styles.centered]}>
@@ -263,22 +321,8 @@ export default function PlayScreen() {
     );
   }
 
-  const activeDeck = deckDef;
-  const isWouldYouRather = activeDeck.playMode === 'would_you_rather' && isWouldYouRatherCard(card);
-  const answerOptions =
-    isWouldYouRather
-      ? [
-          { id: 'option_a' as const, label: card.optionA },
-          { id: 'option_b' as const, label: card.optionB },
-        ]
-      : ANSWER_OPTIONS[activeDeck.playMode];
-  const isConversation = activeDeck.playMode === 'conversation';
+  const resolvedDeck = deckDef;
   const subthemeStyle = SUBTHEME_COLORS[card.subtheme];
-  const sessionLength = cards.length;
-  const canGoPrev = currentIndex > 0 && !savingAnswer && !navigating;
-  const canGoNext =
-    currentIndex < sessionLength - 1 && !!cardAnswers.myAnswer && !savingAnswer && !navigating;
-  const nextLabel = currentIndex === sessionLength - 1 ? 'Session complète' : 'Carte suivante →';
 
   async function refreshCurrentCardAnswers() {
     if (!session || !couple) return;
@@ -297,7 +341,7 @@ export default function PlayScreen() {
     setSavingAnswer(answer);
 
     try {
-      await saveGameSessionAnswer(session.id, card.id, answer);
+      await saveGameSessionAnswer(session.id, card.id, answer, null);
       await refreshCurrentCardAnswers();
     } catch (error) {
       setActionError(formatScreenError(error));
@@ -338,6 +382,56 @@ export default function PlayScreen() {
     }
   }
 
+  async function handleChemistryOptionPress(answer: AnswerBasedValue) {
+    if (!isGuidedChoice) return;
+
+    if (answer === 'other') {
+      setActionError(null);
+      setChemistryOtherOpen(true);
+      if (cardAnswers.myAnswer !== 'other') {
+        setChemistryCustomText('');
+      }
+      return;
+    }
+
+    setChemistryOtherOpen(false);
+    setChemistryCustomText('');
+    await handleAnswer(answer);
+  }
+
+  async function handleSaveChemistryOther() {
+    if (!session || !couple || !isGuidedChoice) return;
+
+    const nextCustomText = chemistryCustomText.trim();
+    if (!nextCustomText) {
+      setActionError('Ajoutez une réponse personnelle avant de continuer.');
+      return;
+    }
+
+    setActionError(null);
+    setSavingAnswer('other');
+
+    try {
+      await saveGameSessionAnswer(session.id, card.id, 'other', nextCustomText);
+      await refreshCurrentCardAnswers();
+    } catch (error) {
+      setActionError(formatScreenError(error));
+    } finally {
+      setSavingAnswer(null);
+    }
+  }
+
+  function getGuidedChoiceLabel(answer: GameAnswer | null, customText: string | null): string {
+    if (!isGuidedChoice || !answer) return 'Pas encore de réponse';
+
+    if (answer === 'other') {
+      return customText?.trim() || 'Autre';
+    }
+
+    const option = answerOptions.find((entry) => entry.id === answer);
+    return option?.label ?? ANSWER_LABELS[answer];
+  }
+
   async function handleMove(direction: 'prev' | 'next') {
     if (!session) return;
 
@@ -369,6 +463,9 @@ export default function PlayScreen() {
     if (isConversation) {
       return cardAnswers.myAnswer ? 'Terminé' : 'Pas encore fait';
     }
+    if (isGuidedChoice) {
+      return getGuidedChoiceLabel(cardAnswers.myAnswer, cardAnswers.myCustomText);
+    }
     if (!cardAnswers.myAnswer) return 'Pas encore de réponse';
     if (isWouldYouRather) {
       return cardAnswers.myAnswer === 'option_a' ? card.optionA : card.optionB;
@@ -379,6 +476,12 @@ export default function PlayScreen() {
   function getPartnerAnswerLabel(): string {
     if (isConversation) {
       return cardAnswers.partnerAnswered && cardAnswers.partnerAnswer ? 'Terminé' : 'En attente';
+    }
+    if (isGuidedChoice) {
+      if (!cardAnswers.partnerAnswered || !cardAnswers.partnerAnswer) {
+        return 'En attente de sa réponse';
+      }
+      return getGuidedChoiceLabel(cardAnswers.partnerAnswer, cardAnswers.partnerCustomText);
     }
     if (!cardAnswers.partnerAnswered || !cardAnswers.partnerAnswer) {
       return 'En attente de sa réponse';
@@ -415,10 +518,11 @@ export default function PlayScreen() {
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.card}>
-          <Text style={styles.deckLabel}>{activeDeck.title}</Text>
+          <Text style={styles.deckLabel}>{resolvedDeck.title}</Text>
           <Text style={styles.prompt}>{card.prompt}</Text>
           {isWouldYouRather ? (
             <View style={styles.wyrChoices}>
@@ -512,6 +616,72 @@ export default function PlayScreen() {
               >
                 <Text style={styles.secondaryText}>Marquer comme à reprendre</Text>
               </Pressable>
+            ) : null}
+          </View>
+        ) : isGuidedChoice ? (
+          <View style={styles.answersCol}>
+            {answerOptions.map((option) => {
+              const isSelected = cardAnswers.myAnswer === option.id;
+              const isOtherOption = option.id === 'other';
+
+              return (
+                <Pressable
+                  key={option.id}
+                  style={({ pressed }) => [
+                    styles.answerBtn,
+                    styles.chemistryOptionBtn,
+                    isSelected && styles.answerBtnSelected,
+                    pressed && !savingAnswer && styles.answerBtnPressed,
+                  ]}
+                  onPress={() => handleChemistryOptionPress(option.id as AnswerBasedValue)}
+                  disabled={!!savingAnswer}
+                  accessibilityRole="button"
+                >
+                  <Text style={[styles.answerBtnText, isSelected && styles.answerBtnTextSelected]}>
+                    {option.label}
+                  </Text>
+                  {isOtherOption ? (
+                    <Text
+                      style={[
+                        styles.chemistryOptionHint,
+                        isSelected && styles.chemistryOptionHintSelected,
+                      ]}
+                    >
+                      Réponse libre
+                    </Text>
+                  ) : null}
+                </Pressable>
+              );
+            })}
+
+            {chemistryOtherOpen ? (
+              <View style={styles.otherResponseWrap}>
+                <TextInput
+                  style={styles.otherResponseInput}
+                  value={chemistryCustomText}
+                  onChangeText={setChemistryCustomText}
+                  placeholder="Explique en détail"
+                  placeholderTextColor="#8D99AE"
+                  multiline
+                  maxLength={280}
+                  textAlignVertical="top"
+                />
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.cta,
+                    (!chemistryCustomText.trim() || !!savingAnswer) && styles.ctaDisabled,
+                    pressed &&
+                      !!chemistryCustomText.trim() &&
+                      !savingAnswer &&
+                      styles.ctaPressed,
+                  ]}
+                  onPress={handleSaveChemistryOther}
+                  disabled={!chemistryCustomText.trim() || !!savingAnswer}
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.ctaText}>Enregistrer ma réponse</Text>
+                </Pressable>
+              </View>
             ) : null}
           </View>
         ) : isWouldYouRather ? null : (
@@ -711,6 +881,19 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 28,
   },
+  chemistryOptionBtn: {
+    alignItems: 'flex-start',
+    paddingHorizontal: 18,
+    gap: 6,
+  },
+  chemistryOptionHint: {
+    fontSize: 13,
+    color: '#8D99AE',
+    fontWeight: '500',
+  },
+  chemistryOptionHintSelected: {
+    color: '#FFF5EE',
+  },
   statusRow: {
     flexDirection: 'row',
     gap: 10,
@@ -752,6 +935,22 @@ const styles = StyleSheet.create({
   },
   answersCol: {
     gap: 10,
+  },
+  otherResponseWrap: {
+    gap: 10,
+    marginTop: 4,
+  },
+  otherResponseInput: {
+    minHeight: 120,
+    backgroundColor: '#FFFDF9',
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: '#E9D8C8',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    fontSize: 15,
+    lineHeight: 22,
+    color: '#2B2D42',
   },
   answerBtn: {
     backgroundColor: '#FFFDF9',

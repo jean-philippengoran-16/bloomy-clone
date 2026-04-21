@@ -90,7 +90,8 @@ export function loadSessionCards(session: Pick<GameSession, 'deck_id' | 'card_id
 async function upsertGameSessionResponseValue(
   sessionId: string,
   cardId: string,
-  value: AnswerBasedValue | CompletionValue
+  value: AnswerBasedValue | CompletionValue,
+  customText: string | null = null
 ): Promise<GameSessionAnswer> {
   const userId = await requireUserId();
   const now = new Date().toISOString();
@@ -103,11 +104,12 @@ async function upsertGameSessionResponseValue(
         card_id: cardId,
         user_id: userId,
         answer: value,
+        custom_text: customText,
         updated_at: now,
       },
       { onConflict: 'session_id,card_id,user_id' }
     )
-    .select('id, session_id, card_id, user_id, answer, created_at, updated_at')
+    .select('id, session_id, card_id, user_id, answer, custom_text, created_at, updated_at')
     .single();
 
   if (error) throw error;
@@ -117,9 +119,10 @@ async function upsertGameSessionResponseValue(
 export async function saveGameSessionAnswer(
   sessionId: string,
   cardId: string,
-  answer: AnswerBasedValue
+  answer: AnswerBasedValue,
+  customText: string | null = null
 ): Promise<GameSessionAnswer> {
-  return upsertGameSessionResponseValue(sessionId, cardId, answer);
+  return upsertGameSessionResponseValue(sessionId, cardId, answer, customText);
 }
 
 export async function saveGameSessionCompletion(
@@ -157,20 +160,22 @@ export async function loadGameSessionCardAnswers(
 
   const { data, error } = await supabase
     .from('game_session_answers')
-    .select('id, session_id, card_id, user_id, answer, created_at, updated_at')
+    .select('id, session_id, card_id, user_id, answer, custom_text, created_at, updated_at')
     .eq('session_id', sessionId)
     .eq('card_id', cardId);
 
   if (error) throw error;
 
   const answers = (data ?? []) as GameSessionAnswer[];
-  const myAnswer = answers.find((entry) => entry.user_id === userId)?.answer ?? null;
-  const partnerAnswer = answers.find((entry) => entry.user_id === partnerId)?.answer ?? null;
+  const myEntry = answers.find((entry) => entry.user_id === userId) ?? null;
+  const partnerEntry = answers.find((entry) => entry.user_id === partnerId) ?? null;
 
   return {
-    myAnswer,
-    partnerAnswer,
-    partnerAnswered: partnerAnswer !== null,
+    myAnswer: myEntry?.answer ?? null,
+    partnerAnswer: partnerEntry?.answer ?? null,
+    myCustomText: myEntry?.custom_text ?? null,
+    partnerCustomText: partnerEntry?.custom_text ?? null,
+    partnerAnswered: partnerEntry !== null,
   };
 }
 
