@@ -225,3 +225,265 @@ $$;
 REVOKE EXECUTE ON FUNCTION public.claim_couple_invite(text)     FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION public.claim_couple_invite(text)     FROM anon;
 GRANT  EXECUTE ON FUNCTION public.claim_couple_invite(text)     TO   authenticated;
+
+-- ── Shared game sessions ─────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS public.game_sessions (
+  id         uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  couple_id  uuid        NOT NULL REFERENCES public.couples(id) ON DELETE CASCADE,
+  deck_id    text        NOT NULL,
+  card_ids   text[]      NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT game_sessions_valid_deck CHECK (
+    deck_id IN (
+      'who_is_v1',
+      'would_you_rather_v1',
+      'connection_v1',
+      'chemistry_v1',
+      'dare_v1'
+    )
+  ),
+  CONSTRAINT game_sessions_card_count CHECK (cardinality(card_ids) = 10)
+);
+
+CREATE TABLE IF NOT EXISTS public.game_session_answers (
+  id         uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id uuid        NOT NULL REFERENCES public.game_sessions(id) ON DELETE CASCADE,
+  card_id    text        NOT NULL,
+  user_id    uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  answer     text        NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT game_session_answers_valid_answer CHECK (
+    answer IN ('me', 'you', 'both', 'option_a', 'option_b')
+  )
+);
+
+CREATE TABLE IF NOT EXISTS public.game_session_progress (
+  id            uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id    uuid        NOT NULL REFERENCES public.game_sessions(id) ON DELETE CASCADE,
+  user_id       uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  current_index integer     NOT NULL DEFAULT 0,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT game_session_progress_valid_index CHECK (current_index BETWEEN 0 AND 9)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS game_sessions_couple_deck_idx
+  ON public.game_sessions (couple_id, deck_id);
+CREATE INDEX IF NOT EXISTS game_sessions_couple_idx
+  ON public.game_sessions (couple_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS game_session_answers_unique_idx
+  ON public.game_session_answers (session_id, card_id, user_id);
+CREATE INDEX IF NOT EXISTS game_session_answers_lookup_idx
+  ON public.game_session_answers (session_id, card_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS game_session_progress_unique_idx
+  ON public.game_session_progress (session_id, user_id);
+
+ALTER TABLE public.game_sessions         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.game_session_answers  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.game_session_progress ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "game_sessions_select_own_couple"         ON public.game_sessions;
+DROP POLICY IF EXISTS "game_sessions_insert_own_couple"         ON public.game_sessions;
+DROP POLICY IF EXISTS "game_sessions_update_own_couple"         ON public.game_sessions;
+DROP POLICY IF EXISTS "game_session_answers_select_own_couple"  ON public.game_session_answers;
+DROP POLICY IF EXISTS "game_session_answers_insert_own_user"    ON public.game_session_answers;
+DROP POLICY IF EXISTS "game_session_answers_update_own_user"    ON public.game_session_answers;
+DROP POLICY IF EXISTS "game_session_progress_select_own_couple" ON public.game_session_progress;
+DROP POLICY IF EXISTS "game_session_progress_insert_own_user"   ON public.game_session_progress;
+DROP POLICY IF EXISTS "game_session_progress_update_own_user"   ON public.game_session_progress;
+
+CREATE POLICY "game_sessions_select_own_couple"
+  ON public.game_sessions
+  FOR SELECT
+  TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1
+      FROM public.couples
+      WHERE couples.id = couple_id
+        AND (
+          (SELECT auth.uid()) = couples.user_a
+          OR (SELECT auth.uid()) = couples.user_b
+        )
+    )
+  );
+
+CREATE POLICY "game_sessions_insert_own_couple"
+  ON public.game_sessions
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (
+    EXISTS (
+      SELECT 1
+      FROM public.couples
+      WHERE couples.id = couple_id
+        AND (
+          (SELECT auth.uid()) = couples.user_a
+          OR (SELECT auth.uid()) = couples.user_b
+        )
+    )
+  );
+
+CREATE POLICY "game_sessions_update_own_couple"
+  ON public.game_sessions
+  FOR UPDATE
+  TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1
+      FROM public.couples
+      WHERE couples.id = couple_id
+        AND (
+          (SELECT auth.uid()) = couples.user_a
+          OR (SELECT auth.uid()) = couples.user_b
+        )
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1
+      FROM public.couples
+      WHERE couples.id = couple_id
+        AND (
+          (SELECT auth.uid()) = couples.user_a
+          OR (SELECT auth.uid()) = couples.user_b
+        )
+    )
+  );
+
+CREATE POLICY "game_session_answers_select_own_couple"
+  ON public.game_session_answers
+  FOR SELECT
+  TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1
+      FROM public.game_sessions
+      JOIN public.couples ON couples.id = game_sessions.couple_id
+      WHERE game_sessions.id = session_id
+        AND (
+          (SELECT auth.uid()) = couples.user_a
+          OR (SELECT auth.uid()) = couples.user_b
+        )
+    )
+  );
+
+CREATE POLICY "game_session_answers_insert_own_user"
+  ON public.game_session_answers
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (
+    user_id = (SELECT auth.uid())
+    AND EXISTS (
+      SELECT 1
+      FROM public.game_sessions
+      JOIN public.couples ON couples.id = game_sessions.couple_id
+      WHERE game_sessions.id = session_id
+        AND (
+          (SELECT auth.uid()) = couples.user_a
+          OR (SELECT auth.uid()) = couples.user_b
+        )
+    )
+  );
+
+CREATE POLICY "game_session_answers_update_own_user"
+  ON public.game_session_answers
+  FOR UPDATE
+  TO authenticated
+  USING (
+    user_id = (SELECT auth.uid())
+    AND EXISTS (
+      SELECT 1
+      FROM public.game_sessions
+      JOIN public.couples ON couples.id = game_sessions.couple_id
+      WHERE game_sessions.id = session_id
+        AND (
+          (SELECT auth.uid()) = couples.user_a
+          OR (SELECT auth.uid()) = couples.user_b
+        )
+    )
+  )
+  WITH CHECK (
+    user_id = (SELECT auth.uid())
+    AND EXISTS (
+      SELECT 1
+      FROM public.game_sessions
+      JOIN public.couples ON couples.id = game_sessions.couple_id
+      WHERE game_sessions.id = session_id
+        AND (
+          (SELECT auth.uid()) = couples.user_a
+          OR (SELECT auth.uid()) = couples.user_b
+        )
+    )
+  );
+
+CREATE POLICY "game_session_progress_select_own_couple"
+  ON public.game_session_progress
+  FOR SELECT
+  TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1
+      FROM public.game_sessions
+      JOIN public.couples ON couples.id = game_sessions.couple_id
+      WHERE game_sessions.id = session_id
+        AND (
+          (SELECT auth.uid()) = couples.user_a
+          OR (SELECT auth.uid()) = couples.user_b
+        )
+    )
+  );
+
+CREATE POLICY "game_session_progress_insert_own_user"
+  ON public.game_session_progress
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (
+    user_id = (SELECT auth.uid())
+    AND EXISTS (
+      SELECT 1
+      FROM public.game_sessions
+      JOIN public.couples ON couples.id = game_sessions.couple_id
+      WHERE game_sessions.id = session_id
+        AND (
+          (SELECT auth.uid()) = couples.user_a
+          OR (SELECT auth.uid()) = couples.user_b
+        )
+    )
+  );
+
+CREATE POLICY "game_session_progress_update_own_user"
+  ON public.game_session_progress
+  FOR UPDATE
+  TO authenticated
+  USING (
+    user_id = (SELECT auth.uid())
+    AND EXISTS (
+      SELECT 1
+      FROM public.game_sessions
+      JOIN public.couples ON couples.id = game_sessions.couple_id
+      WHERE game_sessions.id = session_id
+        AND (
+          (SELECT auth.uid()) = couples.user_a
+          OR (SELECT auth.uid()) = couples.user_b
+        )
+    )
+  )
+  WITH CHECK (
+    user_id = (SELECT auth.uid())
+    AND EXISTS (
+      SELECT 1
+      FROM public.game_sessions
+      JOIN public.couples ON couples.id = game_sessions.couple_id
+      WHERE game_sessions.id = session_id
+        AND (
+          (SELECT auth.uid()) = couples.user_a
+          OR (SELECT auth.uid()) = couples.user_b
+        )
+    )
+  );

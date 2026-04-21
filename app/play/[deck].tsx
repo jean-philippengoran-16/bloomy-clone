@@ -1,17 +1,58 @@
-import { useRef, useState } from 'react';
-import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { buildSession, SESSION_SIZE } from '@/lib/game';
 import { getDeck } from '@/data/decks/index';
-import type { GameCard, Subtheme } from '@/types/game';
+import { ensureAnonymousSession } from '@/lib/auth';
+import { getMyCouple, type Couple } from '@/lib/couple';
+import {
+  createOrResumeGameSession,
+  loadGameSessionCardAnswers,
+  loadMyGameSessionProgress,
+  loadSessionCards,
+  saveGameSessionAnswer,
+  updateMyGameSessionProgress,
+} from '@/lib/game-session';
+import type {
+  GameAnswer,
+  GameCard,
+  GameSession,
+  GameSessionCardAnswers,
+  PlayMode,
+  Subtheme,
+} from '@/types/game';
 
-type Answer = 'me' | 'you' | 'both';
+const EMPTY_ANSWERS: GameSessionCardAnswers = {
+  myAnswer: null,
+  partnerAnswer: null,
+  partnerAnswered: false,
+};
 
-const ANSWER_LABELS: Record<Answer, string> = {
+const ANSWER_OPTIONS: Record<PlayMode, { id: GameAnswer; label: string }[]> = {
+  who_is: [
+    { id: 'me', label: 'Moi' },
+    { id: 'you', label: 'Toi' },
+    { id: 'both', label: 'Les deux' },
+  ],
+  would_you_rather: [
+    { id: 'option_a', label: 'Option A' },
+    { id: 'option_b', label: 'Option B' },
+  ],
+};
+
+const ANSWER_LABELS: Record<GameAnswer, string> = {
   me: 'Moi',
   you: 'Toi',
   both: 'Les deux',
+  option_a: 'Option A',
+  option_b: 'Option B',
 };
 
 const SUBTHEME_LABELS: Record<Subtheme, string> = {
@@ -26,34 +67,144 @@ const SUBTHEME_COLORS: Record<Subtheme, { bg: string; text: string }> = {
   chemistry: { bg: '#2B2D42', text: '#FFFDF9' },
 };
 
-const END_MESSAGES = [
-  'Vous venez de vous découvrir un peu plus. ♥',
-  'Dix cartes, mille nuances. Pas mal, vous deux.',
-  'On dirait que vous vous connaissez bien. Ou peut-être pas si bien que ça ?',
-  'Belle session. La prochaine sera encore plus surprenante.',
-];
+function formatScreenError(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return 'Une erreur est survenue.';
+  }
+
+  switch (error.message) {
+    case 'couple_not_found':
+      return "Votre couple n'a pas été trouvé.";
+    case 'session_build_failed':
+      return 'Impossible de préparer cette session.';
+    case 'session_cards_unavailable':
+      return 'Impossible de charger les cartes de cette session.';
+    case 'not_authenticated':
+      return 'Votre session a expiré. Veuillez réessayer.';
+    default:
+      return 'Une erreur est survenue.';
+  }
+}
 
 export default function PlayScreen() {
   const { deck: deckParam } = useLocalSearchParams<{ deck: string }>();
   const deckDef = getDeck(deckParam ?? '');
 
-  const [session, setSession] = useState<GameCard[]>(() =>
-    deckDef ? buildSession(deckDef.id) : []
-  );
-  const [index, setIndex] = useState(0);
-  const [selectedAnswer, setSelectedAnswer] = useState<Answer | null>(null);
-  const fadeAnim = useRef(new Animated.Value(1)).current;
-  const [endMessage] = useState(
-    () => END_MESSAGES[Math.floor(Math.random() * END_MESSAGES.length)]
-  );
+  const [loading, setLoading] = useState(true);
+  const [screenError, setScreenError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [couple, setCouple] = useState<Couple | null>(null);
+  const [session, setSession] = useState<GameSession | null>(null);
+  const [cards, setCards] = useState<GameCard[]>([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [cardAnswers, setCardAnswers] = useState<GameSessionCardAnswers>(EMPTY_ANSWERS);
+  const [savingAnswer, setSavingAnswer] = useState<GameAnswer | null>(null);
+  const [navigating, setNavigating] = useState<'prev' | 'next' | null>(null);
 
-  if (!deckDef) {
+  useEffect(() => {
+    let cancelled = false;
+
+    async function initialize() {
+      if (!deckDef) {
+        setLoading(false);
+        return;
+      }
+
+      setLoading(true);
+      setScreenError(null);
+      setActionError(null);
+
+      try {
+        await ensureAnonymousSession();
+
+        const currentCouple = await getMyCouple();
+        if (!currentCouple) {
+          throw new Error('couple_not_found');
+        }
+
+        const sharedSession = await createOrResumeGameSession(currentCouple.id, deckDef.id);
+        const sessionCards = loadSessionCards(sharedSession);
+        const savedIndex = await loadMyGameSessionProgress(sharedSession.id);
+        const safeIndex = Math.max(0, Math.min(savedIndex, sessionCards.length - 1));
+        const currentCard = sessionCards[safeIndex];
+        const currentAnswers = currentCard
+          ? await loadGameSessionCardAnswers(sharedSession.id, currentCard.id, currentCouple)
+          : EMPTY_ANSWERS;
+
+        if (cancelled) return;
+
+        setCouple(currentCouple);
+        setSession(sharedSession);
+        setCards(sessionCards);
+        setCurrentIndex(safeIndex);
+        setCardAnswers(currentAnswers);
+      } catch (error) {
+        if (cancelled) return;
+        setScreenError(formatScreenError(error));
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    initialize();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [deckDef?.id]);
+
+  const card = cards[currentIndex];
+
+  useEffect(() => {
+    if (!session || !couple || !card) return;
+
+    const activeSession = session;
+    const activeCouple = couple;
+    let cancelled = false;
+
+    async function refreshCardAnswers() {
+      try {
+        const nextAnswers = await loadGameSessionCardAnswers(
+          activeSession.id,
+          card.id,
+          activeCouple
+        );
+        if (!cancelled) {
+          setCardAnswers(nextAnswers);
+        }
+      } catch {
+        // Ignore polling errors for V1
+      }
+    }
+
+    refreshCardAnswers();
+    const timer = setInterval(refreshCardAnswers, 4000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [session?.id, couple?.id, card?.id]);
+
+  if (loading) {
+    return (
+      <View style={[styles.screen, styles.centered]}>
+        <Stack.Screen options={{ headerShown: false }} />
+        <StatusBar style="dark" />
+        <ActivityIndicator size="large" color="#E07A5F" />
+      </View>
+    );
+  }
+
+  if (!deckDef || screenError || !session || !card) {
     return (
       <View style={styles.screen}>
         <Stack.Screen options={{ headerShown: false }} />
         <StatusBar style="dark" />
         <View style={styles.centered}>
-          <Text style={styles.errorTitle}>Deck introuvable</Text>
+          <Text style={styles.errorTitle}>{screenError ?? 'Deck introuvable'}</Text>
           <Pressable
             style={({ pressed }) => [styles.cta, pressed && styles.ctaPressed]}
             onPress={() => router.back()}
@@ -66,73 +217,58 @@ export default function PlayScreen() {
     );
   }
 
-  const sessionLength = Math.min(SESSION_SIZE, session.length);
-  const isFinished = index >= sessionLength;
-  const card = session[index];
-
-  function handleAnswer(answer: Answer) {
-    setSelectedAnswer(answer);
-  }
-
-  function handleNext() {
-    Animated.timing(fadeAnim, {
-      toValue: 0,
-      duration: 140,
-      useNativeDriver: true,
-    }).start(() => {
-      setIndex((i) => i + 1);
-      setSelectedAnswer(null);
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 220,
-        useNativeDriver: true,
-      }).start();
-    });
-  }
-
-  function handleRestart() {
-    fadeAnim.setValue(0);
-    setSession(buildSession(deckDef.id));
-    setIndex(0);
-    setSelectedAnswer(null);
-    Animated.timing(fadeAnim, {
-      toValue: 1,
-      duration: 300,
-      useNativeDriver: true,
-    }).start();
-  }
-
-  if (isFinished) {
-    return (
-      <View style={styles.screen}>
-        <Stack.Screen options={{ headerShown: false }} />
-        <StatusBar style="dark" />
-        <Animated.View style={[styles.endWrap, { opacity: fadeAnim }]}>
-          <Text style={styles.endHeart}>♥</Text>
-          <Text style={styles.endTitle}>Session terminée</Text>
-          <Text style={styles.endMessage}>{endMessage}</Text>
-          <View style={styles.endActions}>
-            <Pressable
-              style={({ pressed }) => [styles.cta, pressed && styles.ctaPressed]}
-              onPress={handleRestart}
-              accessibilityRole="button"
-            >
-              <Text style={styles.ctaText}>↺  Rejouer</Text>
-            </Pressable>
-            <Pressable
-              style={({ pressed }) => [styles.secondary, pressed && styles.secondaryPressed]}
-              onPress={() => router.back()}
-              accessibilityRole="button"
-            >
-              <Text style={styles.secondaryText}>Retour à votre espace</Text>
-            </Pressable>
-          </View>
-        </Animated.View>
-      </View>
-    );
-  }
-
+  const answerOptions = ANSWER_OPTIONS[deckDef.playMode];
   const subthemeStyle = SUBTHEME_COLORS[card.subtheme];
+  const sessionLength = cards.length;
+  const canGoPrev = currentIndex > 0 && !savingAnswer && !navigating;
+  const canGoNext =
+    currentIndex < sessionLength - 1 && !!cardAnswers.myAnswer && !savingAnswer && !navigating;
+  const nextLabel = currentIndex === sessionLength - 1 ? 'Session complète' : 'Carte suivante →';
+
+  async function handleAnswer(answer: GameAnswer) {
+    if (!session || !couple) return;
+
+    setActionError(null);
+    setSavingAnswer(answer);
+    setCardAnswers((current) => ({
+      ...current,
+      myAnswer: answer,
+    }));
+
+    try {
+      await saveGameSessionAnswer(session.id, card.id, answer);
+      const refreshedAnswers = await loadGameSessionCardAnswers(session.id, card.id, couple);
+      setCardAnswers(refreshedAnswers);
+    } catch (error) {
+      setActionError(formatScreenError(error));
+    } finally {
+      setSavingAnswer(null);
+    }
+  }
+
+  async function handleMove(direction: 'prev' | 'next') {
+    if (!session) return;
+
+    const nextIndex =
+      direction === 'prev'
+        ? Math.max(0, currentIndex - 1)
+        : Math.min(sessionLength - 1, currentIndex + 1);
+
+    if (nextIndex === currentIndex) return;
+
+    setActionError(null);
+    setNavigating(direction);
+
+    try {
+      await updateMyGameSessionProgress(session.id, nextIndex);
+      setCurrentIndex(nextIndex);
+      setCardAnswers(EMPTY_ANSWERS);
+    } catch (error) {
+      setActionError(formatScreenError(error));
+    } finally {
+      setNavigating(null);
+    }
+  }
 
   return (
     <View style={styles.screen}>
@@ -148,7 +284,7 @@ export default function PlayScreen() {
           <Text style={styles.backText}>←</Text>
         </Pressable>
         <Text style={styles.progress}>
-          Carte {index + 1} / {sessionLength}
+          Carte {currentIndex + 1} sur {sessionLength}
         </Text>
         <View style={[styles.subthemeBadge, { backgroundColor: subthemeStyle.bg }]}>
           <Text style={[styles.subthemeText, { color: subthemeStyle.text }]}>
@@ -157,61 +293,94 @@ export default function PlayScreen() {
         </View>
       </View>
 
-      <Animated.View style={[styles.cardWrap, { opacity: fadeAnim }]}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.card}>
           <Text style={styles.deckLabel}>{deckDef.title}</Text>
           <Text style={styles.prompt}>{card.prompt}</Text>
         </View>
-      </Animated.View>
 
-      <Animated.View style={[styles.actions, { opacity: fadeAnim }]}>
-        {selectedAnswer ? (
-          <>
-            <View style={styles.answersRow}>
-              {(['me', 'you', 'both'] as Answer[]).map((ans) => (
-                <View
-                  key={ans}
-                  style={[
-                    styles.answerChip,
-                    selectedAnswer === ans ? styles.answerChipSelected : styles.answerChipFaded,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.answerChipText,
-                      selectedAnswer === ans && styles.answerChipTextSelected,
-                    ]}
-                  >
-                    {ANSWER_LABELS[ans]}
-                  </Text>
-                </View>
-              ))}
-            </View>
-            <Pressable
-              style={({ pressed }) => [styles.cta, pressed && styles.ctaPressed]}
-              onPress={handleNext}
-              accessibilityRole="button"
-            >
-              <Text style={styles.ctaText}>
-                {index + 1 < sessionLength ? 'Carte suivante →' : 'Voir le résultat'}
-              </Text>
-            </Pressable>
-          </>
-        ) : (
-          <View style={styles.answersCol}>
-            {(['me', 'you', 'both'] as Answer[]).map((ans) => (
+        <View style={styles.statusRow}>
+          <View style={styles.statusCard}>
+            <Text style={styles.statusLabel}>Ma réponse</Text>
+            <Text style={styles.statusValue}>
+              {cardAnswers.myAnswer ? ANSWER_LABELS[cardAnswers.myAnswer] : 'Pas encore répondu'}
+            </Text>
+          </View>
+
+          <View style={styles.statusCard}>
+            <Text style={styles.statusLabel}>Sa réponse</Text>
+            <Text style={styles.statusValue}>
+              {cardAnswers.partnerAnswered && cardAnswers.partnerAnswer
+                ? ANSWER_LABELS[cardAnswers.partnerAnswer]
+                : 'En attente de sa réponse'}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.answersCol}>
+          {answerOptions.map((option) => {
+            const isSelected = cardAnswers.myAnswer === option.id;
+
+            return (
               <Pressable
-                key={ans}
-                style={({ pressed }) => [styles.answerBtn, pressed && styles.answerBtnPressed]}
-                onPress={() => handleAnswer(ans)}
+                key={option.id}
+                style={({ pressed }) => [
+                  styles.answerBtn,
+                  isSelected && styles.answerBtnSelected,
+                  pressed && !savingAnswer && styles.answerBtnPressed,
+                ]}
+                onPress={() => handleAnswer(option.id)}
+                disabled={!!savingAnswer}
                 accessibilityRole="button"
               >
-                <Text style={styles.answerBtnText}>{ANSWER_LABELS[ans]}</Text>
+                <Text style={[styles.answerBtnText, isSelected && styles.answerBtnTextSelected]}>
+                  {option.label}
+                </Text>
               </Pressable>
-            ))}
-          </View>
-        )}
-      </Animated.View>
+            );
+          })}
+        </View>
+
+        <View style={styles.navRow}>
+          <Pressable
+            style={({ pressed }) => [
+              styles.secondary,
+              styles.navBtn,
+              (!canGoPrev || pressed) && styles.secondaryPressed,
+              !canGoPrev && styles.navBtnDisabled,
+            ]}
+            onPress={() => handleMove('prev')}
+            disabled={!canGoPrev}
+            accessibilityRole="button"
+          >
+            <Text style={styles.secondaryText}>← Précédente</Text>
+          </Pressable>
+
+          <Pressable
+            style={({ pressed }) => [
+              styles.cta,
+              styles.navBtn,
+              (!canGoNext || pressed) && styles.ctaPressed,
+              !canGoNext && styles.ctaDisabled,
+            ]}
+            onPress={() => handleMove('next')}
+            disabled={!canGoNext}
+            accessibilityRole="button"
+          >
+            <Text style={styles.ctaText}>{nextLabel}</Text>
+          </Pressable>
+        </View>
+
+        {savingAnswer ? <Text style={styles.helperText}>Enregistrement...</Text> : null}
+        {actionError ? <Text style={styles.errorText}>{actionError}</Text> : null}
+        {currentIndex === sessionLength - 1 ? (
+          <Text style={styles.helperText}>Vous êtes sur la dernière carte de la session.</Text>
+        ) : null}
+      </ScrollView>
     </View>
   );
 }
@@ -221,8 +390,14 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F9F6F0',
     paddingTop: 60,
-    paddingBottom: 40,
     paddingHorizontal: 24,
+  },
+  scroll: {
+    flex: 1,
+  },
+  content: {
+    paddingBottom: 40,
+    gap: 16,
   },
   centered: {
     flex: 1,
@@ -235,6 +410,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#2B2D42',
     textAlign: 'center',
+  },
+  errorText: {
+    fontSize: 14,
+    color: '#B85A3A',
+    textAlign: 'center',
+    lineHeight: 22,
   },
   topBar: {
     flexDirection: 'row',
@@ -272,10 +453,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.6,
   },
-  cardWrap: {
-    flex: 1,
-    justifyContent: 'center',
-  },
   card: {
     backgroundColor: '#FFFDF9',
     borderRadius: 24,
@@ -304,9 +481,32 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 34,
   },
-  actions: {
-    gap: 12,
-    paddingTop: 16,
+  statusRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  statusCard: {
+    flex: 1,
+    backgroundColor: '#FFFDF9',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E9D8C8',
+    paddingVertical: 16,
+    paddingHorizontal: 14,
+    gap: 6,
+  },
+  statusLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#8D99AE',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  statusValue: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#2B2D42',
+    lineHeight: 22,
   },
   answersCol: {
     gap: 10,
@@ -319,6 +519,10 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     alignItems: 'center',
   },
+  answerBtnSelected: {
+    backgroundColor: '#E07A5F',
+    borderColor: '#E07A5F',
+  },
   answerBtnPressed: {
     backgroundColor: '#F2CCB7',
     borderColor: '#E07A5F',
@@ -329,33 +533,18 @@ const styles = StyleSheet.create({
     color: '#2B2D42',
     letterSpacing: 0.2,
   },
-  answersRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  answerChip: {
-    flex: 1,
-    borderRadius: 12,
-    paddingVertical: 12,
-    alignItems: 'center',
-    borderWidth: 1.5,
-  },
-  answerChipSelected: {
-    backgroundColor: '#E07A5F',
-    borderColor: '#E07A5F',
-  },
-  answerChipFaded: {
-    backgroundColor: '#F9F6F0',
-    borderColor: '#E9D8C8',
-    opacity: 0.35,
-  },
-  answerChipText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#8D99AE',
-  },
-  answerChipTextSelected: {
+  answerBtnTextSelected: {
     color: '#FFFFFF',
+  },
+  navRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  navBtn: {
+    flex: 1,
+  },
+  navBtnDisabled: {
+    opacity: 0.45,
   },
   cta: {
     backgroundColor: '#E07A5F',
@@ -367,6 +556,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 10,
     elevation: 5,
+  },
+  ctaDisabled: {
+    opacity: 0.5,
   },
   ctaPressed: {
     backgroundColor: '#D46A4C',
@@ -397,33 +589,10 @@ const styles = StyleSheet.create({
     color: '#5C677D',
     letterSpacing: 0.2,
   },
-  endWrap: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 16,
-    paddingHorizontal: 8,
-  },
-  endHeart: {
-    fontSize: 52,
-    marginBottom: 8,
-  },
-  endTitle: {
-    fontSize: 32,
-    fontWeight: '800',
-    color: '#2B2D42',
+  helperText: {
+    fontSize: 14,
+    color: '#8D99AE',
     textAlign: 'center',
-    letterSpacing: 0.3,
-  },
-  endMessage: {
-    fontSize: 16,
-    color: '#5C677D',
-    textAlign: 'center',
-    lineHeight: 26,
-    marginBottom: 16,
-  },
-  endActions: {
-    width: '100%',
-    gap: 12,
+    lineHeight: 22,
   },
 });

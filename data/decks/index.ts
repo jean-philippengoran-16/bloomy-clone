@@ -5,6 +5,7 @@ import { WOULD_YOU_RATHER_V1 } from './would-you-rather-v1';
 export const DECK_REGISTRY: Record<DeckId, DeckDefinition> = {
   who_is_v1: {
     id: 'who_is_v1',
+    playMode: 'who_is',
     title: 'Qui de nous deux ?',
     subtitle: 'Set 1 · 60 cartes',
     description: 'Un jeu léger, complice et un peu piquant pour mieux se connaître.',
@@ -13,6 +14,7 @@ export const DECK_REGISTRY: Record<DeckId, DeckDefinition> = {
   },
   would_you_rather_v1: {
     id: 'would_you_rather_v1',
+    playMode: 'would_you_rather',
     title: 'Tu préfères ?',
     subtitle: 'Set 1 · 60 cartes',
     description: 'Des dilemmes à deux, des révélations en douceur.',
@@ -21,6 +23,7 @@ export const DECK_REGISTRY: Record<DeckId, DeckDefinition> = {
   },
   connection_v1: {
     id: 'connection_v1',
+    playMode: 'would_you_rather',
     title: 'Connexion',
     subtitle: 'Set 1',
     description: 'Questions profondes, vraies réponses. Plonger ensemble.',
@@ -29,6 +32,7 @@ export const DECK_REGISTRY: Record<DeckId, DeckDefinition> = {
   },
   chemistry_v1: {
     id: 'chemistry_v1',
+    playMode: 'would_you_rather',
     title: 'Chemistry',
     subtitle: 'Set 1',
     description: 'Juste entre vous deux. Séduisant, intime, élégant.',
@@ -37,6 +41,7 @@ export const DECK_REGISTRY: Record<DeckId, DeckDefinition> = {
   },
   dare_v1: {
     id: 'dare_v1',
+    playMode: 'would_you_rather',
     title: 'Dare',
     subtitle: 'Set 1',
     description: 'Des défis audacieux. Amusants, complices, inoubliables.',

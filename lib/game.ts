@@ -52,3 +52,18 @@ export function buildSession(deckId: DeckId): GameCard[] {
 
   return session;
 }
+
+export function buildSessionCardIds(deckId: DeckId): string[] {
+  return buildSession(deckId).map((card) => card.id);
+}
+
+export function resolveSessionCards(deckId: DeckId, cardIds: string[]): GameCard[] {
+  const deck = getDeck(deckId);
+  if (!deck) return [];
+
+  const cardsById = new Map(deck.cards.map((card) => [card.id, card]));
+  return cardIds.flatMap((cardId) => {
+    const card = cardsById.get(cardId);
+    return card ? [card] : [];
+  });
+}
