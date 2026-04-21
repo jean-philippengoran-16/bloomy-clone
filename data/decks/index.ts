@@ -1,6 +1,7 @@
 import type { DeckId, DeckDefinition } from '@/types/game';
 import { CHEMISTRY_V1 } from './chemistry-v1';
 import { CONNECTION_V1 } from './connection-v1';
+import { DARE_V1 } from './dare-v1';
 import { WHO_IS_V1 } from './who-is-v1';
 import { WOULD_YOU_RATHER_V1 } from './would-you-rather-v1';
 
@@ -43,12 +44,12 @@ export const DECK_REGISTRY: Record<DeckId, DeckDefinition> = {
   },
   dare_v1: {
     id: 'dare_v1',
-    playMode: 'would_you_rather',
+    playMode: 'dare',
     title: 'Dare',
-    subtitle: 'Set 1',
-    description: 'Des défis audacieux. Amusants, complices, inoubliables.',
-    available: false,
-    cards: [],
+    subtitle: 'Set 1 · 60 cartes',
+    description: 'Des défis à vivre à deux, entre audace tendre, jeu et vraie complicité.',
+    available: true,
+    cards: DARE_V1,
   },
 };
 

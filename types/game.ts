@@ -6,7 +6,7 @@ export type DeckId =
   | 'dare_v1';
 
 export type AnswerBasedPlayMode = 'who_is' | 'would_you_rather' | 'guided_choice';
-export type CompletionBasedPlayMode = 'conversation';
+export type CompletionBasedPlayMode = 'conversation' | 'dare';
 export type PlayMode = AnswerBasedPlayMode | CompletionBasedPlayMode;
 export type Subtheme = 'playful' | 'romantic' | 'chemistry';
 export type Tone = 'light' | 'warm' | 'sensual';
@@ -15,9 +15,9 @@ export type WhoIsAnswer = 'me' | 'you' | 'both';
 export type WouldYouRatherAnswer = 'option_a' | 'option_b';
 export type GuidedChoiceAnswer = 'option_a' | 'option_b' | 'option_c' | 'option_d' | 'other';
 export type ChemistryAnswer = GuidedChoiceAnswer;
-export type ConversationAnswer = 'completed';
+export type CompletionAnswer = 'completed' | 'skipped';
 export type AnswerBasedValue = WhoIsAnswer | WouldYouRatherAnswer | GuidedChoiceAnswer;
-export type CompletionValue = ConversationAnswer;
+export type CompletionValue = CompletionAnswer;
 export type GameAnswer = AnswerBasedValue | CompletionValue;
 
 export interface BaseGameCard {

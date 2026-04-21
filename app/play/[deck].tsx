@@ -26,6 +26,7 @@ import {
 import type {
   AnswerBasedValue,
   ChemistryCard,
+  CompletionValue,
   GameAnswer,
   GameCard,
   GameSession,
@@ -60,6 +61,10 @@ const ANSWER_OPTIONS: Record<PlayMode, { id: GameAnswer; label: string }[]> = {
   ],
   guided_choice: [],
   conversation: [{ id: 'completed', label: "On en a parlé" }],
+  dare: [
+    { id: 'completed', label: "On l'a fait" },
+    { id: 'skipped', label: 'On passe' },
+  ],
 };
 
 const ANSWER_LABELS: Record<GameAnswer, string> = {
@@ -72,6 +77,7 @@ const ANSWER_LABELS: Record<GameAnswer, string> = {
   option_d: 'Option D',
   other: 'Autre',
   completed: 'Répondu',
+  skipped: 'Passé',
 };
 
 const SUBTHEME_LABELS: Record<Subtheme, string> = {
@@ -210,6 +216,7 @@ export default function PlayScreen() {
   const isGuidedChoice =
     !!activeDeck && !!card && activeDeck.playMode === 'guided_choice' && isChemistryCard(card);
   const isConversation = activeDeck?.playMode === 'conversation';
+  const isDare = activeDeck?.playMode === 'dare';
   const answerOptions =
     isWouldYouRather && card
       ? [
@@ -366,6 +373,22 @@ export default function PlayScreen() {
     }
   }
 
+  async function handleDareDecision(decision: CompletionValue) {
+    if (!session || !couple || !isDare) return;
+
+    setActionError(null);
+    setSavingAnswer(decision);
+
+    try {
+      await saveGameSessionCompletion(session.id, card.id, decision);
+      await refreshCurrentCardAnswers();
+    } catch (error) {
+      setActionError(formatScreenError(error));
+    } finally {
+      setSavingAnswer(null);
+    }
+  }
+
   async function handleClearConversationCompletion() {
     if (!session || !couple) return;
 
@@ -463,6 +486,11 @@ export default function PlayScreen() {
     if (isConversation) {
       return cardAnswers.myAnswer ? 'Terminé' : 'Pas encore fait';
     }
+    if (isDare) {
+      if (cardAnswers.myAnswer === 'completed') return "On l'a fait";
+      if (cardAnswers.myAnswer === 'skipped') return 'On passe';
+      return 'Pas encore choisi';
+    }
     if (isGuidedChoice) {
       return getGuidedChoiceLabel(cardAnswers.myAnswer, cardAnswers.myCustomText);
     }
@@ -476,6 +504,14 @@ export default function PlayScreen() {
   function getPartnerAnswerLabel(): string {
     if (isConversation) {
       return cardAnswers.partnerAnswered && cardAnswers.partnerAnswer ? 'Terminé' : 'En attente';
+    }
+    if (isDare) {
+      if (!cardAnswers.partnerAnswered || !cardAnswers.partnerAnswer) {
+        return 'En attente';
+      }
+      if (cardAnswers.partnerAnswer === 'completed') return "On l'a fait";
+      if (cardAnswers.partnerAnswer === 'skipped') return 'On passe';
+      return 'En attente';
     }
     if (isGuidedChoice) {
       if (!cardAnswers.partnerAnswered || !cardAnswers.partnerAnswer) {
@@ -567,14 +603,14 @@ export default function PlayScreen() {
         <View style={styles.statusRow}>
           <View style={styles.statusCard}>
             <Text style={styles.statusLabel}>
-              {isConversation ? 'Mon avancement' : 'Ma réponse'}
+              {isConversation ? 'Mon avancement' : isDare ? 'Mon statut' : 'Ma réponse'}
             </Text>
             <Text style={styles.statusValue}>{getMyAnswerLabel()}</Text>
           </View>
 
           <View style={styles.statusCard}>
             <Text style={styles.statusLabel}>
-              {isConversation ? 'Son avancement' : 'Sa réponse'}
+              {isConversation ? 'Son avancement' : isDare ? 'Son statut' : 'Sa réponse'}
             </Text>
             <Text style={styles.statusValue}>{getPartnerAnswerLabel()}</Text>
           </View>
@@ -617,6 +653,35 @@ export default function PlayScreen() {
                 <Text style={styles.secondaryText}>Marquer comme à reprendre</Text>
               </Pressable>
             ) : null}
+          </View>
+        ) : isDare ? (
+          <View style={styles.conversationWrap}>
+            <Text style={styles.conversationHelper}>
+              Relevez ce défi seulement si vous en avez envie tous les deux.
+            </Text>
+            <View style={styles.answersCol}>
+              {answerOptions.map((option) => {
+                const isSelected = cardAnswers.myAnswer === option.id;
+
+                return (
+                  <Pressable
+                    key={option.id}
+                    style={({ pressed }) => [
+                      styles.answerBtn,
+                      isSelected && styles.answerBtnSelected,
+                      pressed && !savingAnswer && styles.answerBtnPressed,
+                    ]}
+                    onPress={() => handleDareDecision(option.id as CompletionValue)}
+                    disabled={!!savingAnswer}
+                    accessibilityRole="button"
+                  >
+                    <Text style={[styles.answerBtnText, isSelected && styles.answerBtnTextSelected]}>
+                      {option.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
           </View>
         ) : isGuidedChoice ? (
           <View style={styles.answersCol}>

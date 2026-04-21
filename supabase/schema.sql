@@ -266,7 +266,8 @@ CREATE TABLE IF NOT EXISTS public.game_session_answers (
       'option_c',
       'option_d',
       'other',
-      'completed'
+      'completed',
+      'skipped'
     )
   )
 );
@@ -288,7 +289,8 @@ ALTER TABLE public.game_session_answers
       'option_c',
       'option_d',
       'other',
-      'completed'
+      'completed',
+      'skipped'
     )
   );
 

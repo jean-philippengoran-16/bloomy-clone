@@ -118,7 +118,9 @@ export default function CoupleScreen() {
   const gridDecks = DECK_ORDER.slice(1).map((id) => DECK_REGISTRY[id]);
 
   function getDeckActionLabel(deckId: string): string {
-    return deckId === 'connection_v1' ? 'Ouvrir →' : 'Jouer →';
+    if (deckId === 'connection_v1') return 'Ouvrir →';
+    if (deckId === 'dare_v1') return 'Oser →';
+    return 'Jouer →';
   }
 
   return (
